@@ -25,6 +25,10 @@ const (
 
 	// Screen clear + cursor home
 	clearScreen = "\033[2J\033[H"
+
+	// tickInterval is the polling interval for status updates
+	// Balance between responsiveness (fast updates) and CPU usage
+	tickInterval = 500 * time.Millisecond
 )
 
 // Home is the main application model
@@ -196,10 +200,10 @@ func (h *Home) loadSessions() tea.Msg {
 	return loadSessionsMsg{instances: instances, groups: groups, err: err}
 }
 
-// tick returns a command that sends a tick message every 500ms
+// tick returns a command that sends a tick message at regular intervals
 // Status updates use time-based cooldown to prevent flickering
 func (h *Home) tick() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -265,9 +269,11 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			h.rebuildFlatItems()
 			h.search.SetItems(h.instances)
-			// Trigger immediate preview fetch for initial selection
+			// Trigger immediate preview fetch for initial selection (mutex-protected)
 			if selected := h.getSelectedSession(); selected != nil {
+				h.previewCacheMu.Lock()
 				h.previewFetchingID = selected.ID
+				h.previewCacheMu.Unlock()
 				return h, h.fetchPreview(selected)
 			}
 		}
@@ -283,7 +289,9 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.rebuildFlatItems()
 			h.search.SetItems(h.instances)
 			if h.storage != nil {
-				h.storage.Save(h.instances)
+				if err := h.storage.Save(h.instances); err != nil {
+					h.err = fmt.Errorf("failed to save session: %w", err)
+				}
 			}
 		}
 		return h, nil
@@ -312,7 +320,12 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h.search.SetItems(h.instances)
 		// Save to storage
 		if h.storage != nil {
-			h.storage.Save(h.instances)
+			if err := h.storage.Save(h.instances); err != nil {
+				// Only set error if no kill error (kill error takes precedence as it's more actionable)
+				if h.err == nil {
+					h.err = fmt.Errorf("failed to save after delete: %w", err)
+				}
+			}
 		}
 		return h, nil
 
@@ -337,12 +350,13 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case previewFetchedMsg:
 		// Async preview content received - update cache
+		// Protect both previewFetchingID and previewCache with the same mutex
+		h.previewCacheMu.Lock()
 		h.previewFetchingID = ""
 		if msg.err == nil {
-			h.previewCacheMu.Lock()
 			h.previewCache[msg.sessionID] = msg.content
-			h.previewCacheMu.Unlock()
 		}
+		h.previewCacheMu.Unlock()
 		return h, nil
 
 	case tickMsg:
@@ -357,12 +371,15 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		// Fetch preview for currently selected session (if not already fetching)
+		// Protect previewFetchingID access with mutex
 		var previewCmd tea.Cmd
 		if selected := h.getSelectedSession(); selected != nil {
+			h.previewCacheMu.Lock()
 			if h.previewFetchingID != selected.ID {
 				h.previewFetchingID = selected.ID
 				previewCmd = h.fetchPreview(selected)
 			}
+			h.previewCacheMu.Unlock()
 		}
 		return h, tea.Batch(h.tick(), previewCmd)
 
@@ -409,7 +426,8 @@ func (h *Home) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 	}
 
-	cmd := h.search.Update(msg)
+	var cmd tea.Cmd
+	h.search, cmd = h.search.Update(msg)
 	return h, cmd
 }
 
@@ -447,7 +465,10 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		h.cancel()
 		if h.storage != nil {
-			h.storage.Save(h.instances)
+			// Best effort save on quit - log error but don't block exit
+			if err := h.storage.Save(h.instances); err != nil {
+				log.Printf("Warning: failed to save on quit: %v", err)
+			}
 		}
 		return h, tea.Quit
 
@@ -455,10 +476,17 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor > 0 {
 			h.cursor--
 			h.syncViewport()
-			// Trigger immediate preview fetch for new selection
-			if selected := h.getSelectedSession(); selected != nil && h.previewFetchingID != selected.ID {
-				h.previewFetchingID = selected.ID
-				return h, h.fetchPreview(selected)
+			// Trigger immediate preview fetch for new selection (mutex-protected)
+			if selected := h.getSelectedSession(); selected != nil {
+				h.previewCacheMu.Lock()
+				needsFetch := h.previewFetchingID != selected.ID
+				if needsFetch {
+					h.previewFetchingID = selected.ID
+				}
+				h.previewCacheMu.Unlock()
+				if needsFetch {
+					return h, h.fetchPreview(selected)
+				}
 			}
 		}
 		return h, nil
@@ -467,10 +495,17 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < len(h.flatItems)-1 {
 			h.cursor++
 			h.syncViewport()
-			// Trigger immediate preview fetch for new selection
-			if selected := h.getSelectedSession(); selected != nil && h.previewFetchingID != selected.ID {
-				h.previewFetchingID = selected.ID
-				return h, h.fetchPreview(selected)
+			// Trigger immediate preview fetch for new selection (mutex-protected)
+			if selected := h.getSelectedSession(); selected != nil {
+				h.previewCacheMu.Lock()
+				needsFetch := h.previewFetchingID != selected.ID
+				if needsFetch {
+					h.previewFetchingID = selected.ID
+				}
+				h.previewCacheMu.Unlock()
+				if needsFetch {
+					return h, h.fetchPreview(selected)
+				}
 			}
 		}
 		return h, nil
@@ -599,9 +634,20 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case "n":
+		// Collect unique project paths from existing sessions
+		pathSet := make(map[string]bool)
+		var paths []string
+		for _, inst := range h.instances {
+			if inst.ProjectPath != "" && !pathSet[inst.ProjectPath] {
+				pathSet[inst.ProjectPath] = true
+				paths = append(paths, inst.ProjectPath)
+			}
+		}
+		h.newDialog.SetPathSuggestions(paths)
+
 		// Auto-select parent group from current cursor position
-		groupPath := "default"
-		groupName := "default"
+		groupPath := session.DefaultGroupName
+		groupName := session.DefaultGroupName
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeGroup {
@@ -624,7 +670,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeSession && item.Session != nil {
 				h.confirmDialog.ShowDeleteSession(item.Session.ID, item.Session.Title)
-			} else if item.Type == session.ItemTypeGroup && item.Path != "default" {
+			} else if item.Type == session.ItemTypeGroup && item.Path != session.DefaultGroupName {
 				h.confirmDialog.ShowDeleteGroup(item.Path, item.Group.Name)
 			}
 		}
@@ -756,7 +802,9 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (h *Home) saveInstances() {
 	if h.storage != nil {
 		// Save both instances and groups (including empty ones)
-		h.storage.SaveWithGroups(h.instances, h.groupTree)
+		if err := h.storage.SaveWithGroups(h.instances, h.groupTree); err != nil {
+			h.err = fmt.Errorf("failed to save: %w", err)
+		}
 	}
 }
 
@@ -849,7 +897,10 @@ func (h *Home) importSessions() tea.Msg {
 
 	h.instances = append(h.instances, discovered...)
 	if h.storage != nil {
-		h.storage.Save(h.instances)
+		if err := h.storage.Save(h.instances); err != nil {
+			// Log but continue - sessions are imported even if save fails
+			log.Printf("Warning: failed to save after import: %v", err)
+		}
 	}
 	return loadSessionsMsg{instances: h.instances}
 }
@@ -864,7 +915,7 @@ func (h *Home) countSessionStatuses() (running, waiting, idle int) {
 			waiting++
 		case session.StatusIdle:
 			idle++
-		// StatusError is counted as neither - will show as idle in logo
+			// StatusError is counted as neither - will show as idle in logo
 		}
 	}
 	return running, waiting, idle
@@ -942,7 +993,7 @@ func (h *Home) View() string {
 	// ═══════════════════════════════════════════════════════════════════
 	// MAIN CONTENT AREA
 	// ═══════════════════════════════════════════════════════════════════
-	helpBarHeight := 3 // Help bar takes 3 lines
+	helpBarHeight := 3                            // Help bar takes 3 lines
 	contentHeight := h.height - 2 - helpBarHeight // -2 for header, -helpBarHeight for help
 
 	// Calculate panel widths (35% left, 65% right for more preview space)
