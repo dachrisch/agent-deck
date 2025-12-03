@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -316,7 +317,47 @@ func (d *NewDialog) View() string {
 	content.WriteString("\n")
 	content.WriteString("  ")
 	content.WriteString(d.pathInput.View())
-	content.WriteString("\n\n")
+	content.WriteString("\n")
+
+	// Show path suggestions dropdown when path field is focused
+	if d.focusIndex == 1 {
+		matched := d.pathInput.MatchedSuggestions()
+		if len(matched) > 0 {
+			suggestionStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240"))
+			selectedStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("6")).
+				Bold(true)
+			currentIdx := d.pathInput.CurrentSuggestionIndex()
+
+			// Show up to 5 suggestions
+			maxShow := 5
+			if len(matched) < maxShow {
+				maxShow = len(matched)
+			}
+
+			content.WriteString("  ")
+			content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("─ suggestions (Tab: accept, Ctrl+N/P: cycle) ─"))
+			content.WriteString("\n")
+
+			for i := 0; i < maxShow; i++ {
+				style := suggestionStyle
+				prefix := "    "
+				if i == currentIdx {
+					style = selectedStyle
+					prefix = "  ▶ "
+				}
+				content.WriteString(style.Render(prefix + matched[i]))
+				content.WriteString("\n")
+			}
+
+			if len(matched) > maxShow {
+				content.WriteString(suggestionStyle.Render(fmt.Sprintf("    ... and %d more", len(matched)-maxShow)))
+				content.WriteString("\n")
+			}
+		}
+	}
+	content.WriteString("\n")
 
 	// Command selection
 	if d.focusIndex == 2 {
