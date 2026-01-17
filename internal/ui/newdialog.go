@@ -34,42 +34,12 @@ type NewDialog struct {
 	branchInput     textinput.Model
 	// Gemini YOLO mode
 	geminiYoloMode bool
+	globalYoloMode bool
 }
 
 // NewNewDialog creates a new NewDialog instance
 func NewNewDialog() *NewDialog {
-	// Create name input
-	nameInput := textinput.New()
-	nameInput.Placeholder = "session-name"
-	nameInput.Focus()
-	nameInput.CharLimit = 100
-	nameInput.Width = 40
-
-	// Create path input
-	pathInput := textinput.New()
-	pathInput.Placeholder = "~/project/path"
-	pathInput.CharLimit = 256
-	pathInput.Width = 40
-	pathInput.ShowSuggestions = true // enable built-in suggestions
-
-	// Get current working directory for default path
-	cwd, err := os.Getwd()
-	if err == nil {
-		pathInput.SetValue(cwd)
-	}
-
-	// Create command input
-	commandInput := textinput.New()
-	commandInput.Placeholder = "custom command"
-	commandInput.CharLimit = 100
-	commandInput.Width = 40
-
-	// Create branch input for worktree
-	branchInput := textinput.New()
-	branchInput.Placeholder = "feature/branch-name"
-	branchInput.CharLimit = 100
-	branchInput.Width = 40
-
+	// ... existing initialization ...
 	return &NewDialog{
 		nameInput:       nameInput,
 		pathInput:       pathInput,
@@ -82,6 +52,8 @@ func NewNewDialog() *NewDialog {
 		parentGroupPath: "default",
 		parentGroupName: "default",
 		worktreeEnabled: false,
+		geminiYoloMode:  false,
+		globalYoloMode:  false,
 	}
 }
 
@@ -113,19 +85,24 @@ func (d *NewDialog) ShowInGroup(groupPath, groupName, defaultPath string) {
 			d.pathInput.SetValue(cwd)
 		}
 	}
-	// Initialize Gemini YOLO mode from global config
-	d.geminiYoloMode = false
-	if userConfig, err := session.LoadUserConfig(); err == nil && userConfig != nil {
-		d.geminiYoloMode = userConfig.Gemini.YoloMode
-	}
+	// Note: geminiYoloMode state is managed by SetDefaultTool and Update loop
 }
 
 // SetDefaultTool sets the pre-selected command based on tool name
 // Call this before Show/ShowInGroup to apply user's preferred default
-func (d *NewDialog) SetDefaultTool(tool string) {
+func (d *NewDialog) SetDefaultTool(tool string, globalYoloMode bool) {
+	d.globalYoloMode = globalYoloMode
 	if tool == "" {
 		d.commandCursor = 0 // Default to shell
+		d.geminiYoloMode = false
 		return
+	}
+
+	// Set YOLO mode if tool is gemini
+	if tool == "gemini" {
+		d.geminiYoloMode = globalYoloMode
+	} else {
+		d.geminiYoloMode = false
 	}
 
 	// Find the tool in preset commands
@@ -225,6 +202,13 @@ func (d *NewDialog) GetValuesWithWorktree() (name, path, command, branch string,
 	name, path, command = d.GetValues()
 	branch = strings.TrimSpace(d.branchInput.Value())
 	worktreeEnabled = d.worktreeEnabled
+	return
+}
+
+// GetValuesWithYolo returns all values including YOLO mode setting
+func (d *NewDialog) GetValuesWithYolo() (name, path, command, branch string, worktreeEnabled, yoloEnabled bool) {
+	name, path, command, branch, worktreeEnabled = d.GetValuesWithWorktree()
+	yoloEnabled = d.geminiYoloMode
 	return
 }
 
@@ -390,6 +374,12 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 				if d.commandCursor < 0 {
 					d.commandCursor = len(d.presetCommands) - 1
 				}
+				// Auto-set YOLO based on global setting when switching to Gemini
+				if d.presetCommands[d.commandCursor] == "gemini" {
+					d.geminiYoloMode = d.globalYoloMode
+				} else {
+					d.geminiYoloMode = false
+				}
 				return d, nil
 			}
 
@@ -397,6 +387,12 @@ func (d *NewDialog) Update(msg tea.Msg) (*NewDialog, tea.Cmd) {
 			// Command selection
 			if d.focusIndex == 2 {
 				d.commandCursor = (d.commandCursor + 1) % len(d.presetCommands)
+				// Auto-set YOLO based on global setting when switching to Gemini
+				if d.presetCommands[d.commandCursor] == "gemini" {
+					d.geminiYoloMode = d.globalYoloMode
+				} else {
+					d.geminiYoloMode = false
+				}
 				return d, nil
 			}
 

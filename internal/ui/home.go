@@ -120,6 +120,7 @@ type Home struct {
 	storage      *session.Storage
 	groupTree    *session.GroupTree
 	flatItems    []session.Item // Flattened view for cursor navigation
+	globalYoloMode bool           // Cached global YOLO mode setting
 
 	// Components
 	search        *Search
@@ -795,15 +796,18 @@ func (h *Home) loadSessions() tea.Msg {
 
 	// Initialize pool AFTER sessions are loaded
 	userConfig, configErr := session.LoadUserConfig()
-	if configErr == nil && userConfig != nil && userConfig.MCPPool.Enabled {
-		pool, poolErr := session.InitializeGlobalPool(h.ctx, userConfig, instances)
-		if poolErr != nil {
-			log.Printf("Warning: failed to initialize MCP pool: %v", poolErr)
-			msg.poolError = poolErr
-		} else if pool != nil {
-			proxies := pool.ListServers()
-			log.Printf("✓ MCP Socket Pool initialized (%d proxies)", len(proxies))
-			msg.poolProxies = len(proxies)
+	if configErr == nil && userConfig != nil {
+		h.globalYoloMode = userConfig.Gemini.YoloMode
+		if userConfig.MCPPool.Enabled {
+			pool, poolErr := session.InitializeGlobalPool(h.ctx, userConfig, instances)
+			if poolErr != nil {
+				log.Printf("Warning: failed to initialize MCP pool: %v", poolErr)
+				msg.poolError = poolErr
+			} else if pool != nil {
+				proxies := pool.ListServers()
+				log.Printf("✓ MCP Socket Pool initialized (%d proxies)", len(proxies))
+				msg.poolProxies = len(proxies)
+			}
 		}
 	}
 
@@ -1795,10 +1799,12 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				h.setupWizard.Hide()
 				// Reload config cache
-				_, _ = session.ReloadUserConfig()
+				if config, err := session.ReloadUserConfig(); err == nil {
+					h.globalYoloMode = config.Gemini.YoloMode
+				}
 				// Apply default tool to new dialog
 				if defaultTool := session.GetDefaultTool(); defaultTool != "" {
-					h.newDialog.SetDefaultTool(defaultTool)
+					h.newDialog.SetDefaultTool(defaultTool, h.globalYoloMode)
 				}
 			}
 			return h, cmd
@@ -1816,10 +1822,12 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					h.err = err
 					h.errTime = time.Now()
 				}
-				_, _ = session.ReloadUserConfig()
+				if config, err := session.ReloadUserConfig(); err == nil {
+					h.globalYoloMode = config.Gemini.YoloMode
+				}
 				// Apply default tool to new dialog
 				if defaultTool := session.GetDefaultTool(); defaultTool != "" {
-					h.newDialog.SetDefaultTool(defaultTool)
+					h.newDialog.SetDefaultTool(defaultTool, h.globalYoloMode)
 				}
 			}
 			return h, cmd
@@ -2040,8 +2048,8 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return h, nil
 		}
 
-		// Get values including worktree settings
-		name, path, command, branchName, worktreeEnabled := h.newDialog.GetValuesWithWorktree()
+		// Get values including worktree and YOLO settings
+		name, path, command, branchName, worktreeEnabled, yoloEnabled := h.newDialog.GetValuesWithYolo()
 		groupPath := h.newDialog.GetSelectedGroup()
 
 		// Handle worktree creation if enabled
@@ -2077,11 +2085,8 @@ func (h *Home) handleNewDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		h.newDialog.Hide()
 		h.clearError() // Clear any previous validation error
 
-		// Get Gemini YOLO mode from dialog
-		geminiYoloMode := h.newDialog.IsGeminiYoloMode()
-
-		// Create session with worktree info
-		return h, h.createSessionInGroupWithWorktreeAndOptions(name, path, command, groupPath, worktreePath, worktreeRepoRoot, branchName, geminiYoloMode)
+		// Create session with worktree and YOLO info
+		return h, h.createSessionInGroupWithWorktree(name, path, command, groupPath, worktreePath, worktreeRepoRoot, branchName, yoloEnabled)
 
 	case "esc":
 		h.newDialog.Hide()
@@ -2270,6 +2275,27 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case "y":
+		// Toggle YOLO mode for Gemini sessions
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil && item.Session.Tool == "gemini" {
+				// Determine target value (toggle current)
+				current := false
+				if item.Session.GeminiYoloMode != nil {
+					current = *item.Session.GeminiYoloMode
+				} else {
+					current = h.globalYoloMode
+				}
+				targetVal := !current
+
+				// Show confirmation BEFORE applying change
+				h.confirmDialog.ShowYoloRestart(item.Session.ID, item.Session.Title, targetVal)
+				return h, nil
+			}
+		}
+		return h, nil
+
 	case "M", "shift+m":
 		// MCP Manager - for Claude and Gemini sessions
 		if h.cursor < len(h.flatItems) {
@@ -2409,7 +2435,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		h.newDialog.SetPathSuggestions(paths)
 
 		// Apply user's preferred default tool from config
-		h.newDialog.SetDefaultTool(session.GetDefaultTool())
+		h.newDialog.SetDefaultTool(session.GetDefaultTool(), h.globalYoloMode)
 
 		// Auto-select parent group from current cursor position
 		groupPath := session.DefaultGroupName
@@ -2427,8 +2453,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		defaultPath := h.getDefaultPathForGroup(groupPath)
-		h.newDialog.ShowInGroup(groupPath, groupName, defaultPath)
+		h.newDialog.ShowInGroup(groupPath, groupName)
 		return h, nil
 
 	case "d":
@@ -2551,7 +2576,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (h *Home) handleConfirmDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
-		// User confirmed - perform the deletion
+		// User confirmed - perform the action
 		switch h.confirmDialog.GetConfirmType() {
 		case ConfirmDeleteSession:
 			sessionID := h.confirmDialog.GetTargetID()
@@ -2567,6 +2592,21 @@ func (h *Home) handleConfirmDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			h.instancesMu.Unlock()
 			h.rebuildFlatItems()
 			h.saveInstances()
+		case ConfirmYoloRestart:
+			sessionID := h.confirmDialog.GetTargetID()
+			if inst := h.getInstanceByID(sessionID); inst != nil {
+				// Apply the change now that user confirmed (syncs to tmux env to prevent revert race)
+				inst.SetGeminiYoloMode(h.confirmDialog.yoloEnabled)
+
+				// Save changes
+				h.saveInstances()
+
+				if inst.CanRestart() {
+					h.resumingSessions[inst.ID] = time.Now()
+					h.confirmDialog.Hide()
+					return h, h.restartSession(inst)
+				}
+			}
 		}
 		h.confirmDialog.Hide()
 		return h, nil
@@ -2826,18 +2866,8 @@ func (h *Home) getUsedClaudeSessionIDs() map[string]bool {
 	return usedIDs
 }
 
-// createSessionInGroup creates a new session in a specific group
-func (h *Home) createSessionInGroup(name, path, command, groupPath string) tea.Cmd {
-	return h.createSessionInGroupWithWorktreeAndOptions(name, path, command, groupPath, "", "", "", false)
-}
-
 // createSessionInGroupWithWorktree creates a new session in a specific group with optional worktree settings
-func (h *Home) createSessionInGroupWithWorktree(name, path, command, groupPath, worktreePath, worktreeRepoRoot, worktreeBranch string) tea.Cmd {
-	return h.createSessionInGroupWithWorktreeAndOptions(name, path, command, groupPath, worktreePath, worktreeRepoRoot, worktreeBranch, false)
-}
-
-// createSessionInGroupWithWorktreeAndOptions creates a new session with full options including YOLO mode
-func (h *Home) createSessionInGroupWithWorktreeAndOptions(name, path, command, groupPath, worktreePath, worktreeRepoRoot, worktreeBranch string, geminiYoloMode bool) tea.Cmd {
+func (h *Home) createSessionInGroupWithWorktree(name, path, command, groupPath, worktreePath, worktreeRepoRoot, worktreeBranch string, yoloEnabled bool) tea.Cmd {
 	return func() tea.Msg {
 		// Check tmux availability before creating session
 		if err := tmux.IsTmuxAvailable(); err != nil {
@@ -2873,9 +2903,9 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(name, path, command, g
 			inst.WorktreeBranch = worktreeBranch
 		}
 
-		// Set Gemini YOLO mode if enabled (per-session override)
-		if geminiYoloMode && tool == "gemini" {
-			inst.GeminiYoloMode = &geminiYoloMode
+		// Set YOLO mode for Gemini sessions
+		if tool == "gemini" && yoloEnabled {
+			inst.GeminiYoloMode = &yoloEnabled
 		}
 
 		if err := inst.Start(); err != nil {
@@ -4470,6 +4500,23 @@ func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected
 	title := titleStyle.Render(inst.Title)
 	tool := toolStyle.Render(" " + inst.Tool)
 
+	// Add YOLO badge if enabled (Gemini only)
+	if inst.Tool == "gemini" {
+		isYolo := false
+		if inst.GeminiYoloMode != nil {
+			isYolo = *inst.GeminiYoloMode
+		} else {
+			isYolo = h.globalYoloMode
+		}
+
+		if isYolo {
+			yoloStyle := lipgloss.NewStyle().
+				Foreground(ColorYellow).
+				Bold(true)
+			tool += " " + yoloStyle.Render("[YOLO]")
+		}
+	}
+
 	// Build row: [baseIndent][selection][tree][status] [title] [tool]
 	// Format: " ├─ ● session-name tool" or "▶└─ ● session-name tool"
 	// Sub-sessions get extra indent: "   ├─◐ sub-session tool"
@@ -4834,6 +4881,25 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		Background(ColorPurple).
 		Padding(0, 1).
 		Render(selected.Tool)
+
+	// Add YOLO badge next to tool badge (Gemini only)
+	if selected.Tool == "gemini" {
+		isYolo := false
+		if selected.GeminiYoloMode != nil {
+			isYolo = *selected.GeminiYoloMode
+		} else {
+			isYolo = h.globalYoloMode
+		}
+
+		if isYolo {
+			yoloBadge := lipgloss.NewStyle().
+				Foreground(ColorYellow).
+				Bold(true).
+				Render("[YOLO]")
+			toolBadge = toolBadge + " " + yoloBadge
+		}
+	}
+
 	groupBadge := lipgloss.NewStyle().
 		Foreground(ColorBg).
 		Background(ColorCyan).
@@ -4978,7 +5044,10 @@ func (h *Home) renderPreviewPane(width, height int) string {
 				// For non-last MCPs: reserve space for "+N more" indicator
 				// For last MCP: just check if it fits without indicator
 				var wouldExceed bool
-				if isLast {
+				if i == 0 && addedWidth > mcpMaxWidth {
+					// Even the first one doesn't fit - will show count below
+					wouldExceed = true
+				} else if isLast {
 					// Last MCP - just check if it fits
 					wouldExceed = currentWidth+addedWidth > mcpMaxWidth
 				} else {
@@ -5022,6 +5091,47 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			b.WriteString(hintStyle.Render(" quick fork, "))
 			b.WriteString(keyStyle.Render("F"))
 			b.WriteString(hintStyle.Render(" fork with options"))
+			b.WriteString("\n")
+		}
+	}
+
+	// Gemini-specific info (session ID and MCPs)
+	if selected.Tool == "gemini" {
+		// Section divider for Gemini info
+		geminiHeader := renderSectionDivider("Gemini", width-4)
+		b.WriteString(geminiHeader)
+		b.WriteString("\n")
+
+		labelStyle := lipgloss.NewStyle().Foreground(ColorText)
+		valueStyle := lipgloss.NewStyle().Foreground(ColorText)
+
+		// Status line
+		if selected.GeminiSessionID != "" {
+			statusStyle := lipgloss.NewStyle().Foreground(ColorGreen).Bold(true)
+			b.WriteString(labelStyle.Render("Status:  "))
+			b.WriteString(statusStyle.Render("● Connected"))
+			b.WriteString("\n")
+
+			// Full session ID on its own line
+			b.WriteString(labelStyle.Render("Session: "))
+			b.WriteString(valueStyle.Render(selected.GeminiSessionID))
+			b.WriteString("\n")
+		} else {
+			statusStyle := lipgloss.NewStyle().Foreground(ColorText)
+			b.WriteString(labelStyle.Render("Status:  "))
+			b.WriteString(statusStyle.Render("○ Not connected"))
+			b.WriteString("\n")
+		}
+
+		// MCP servers for Gemini (only global for now)
+		mcpInfo := selected.GetMCPInfo()
+		if mcpInfo != nil && len(mcpInfo.Global) > 0 {
+			b.WriteString(labelStyle.Render("MCPs:    "))
+			var mcpParts []string
+			for _, name := range mcpInfo.Global {
+				mcpParts = append(mcpParts, valueStyle.Render(name+" (g)"))
+			}
+			b.WriteString(strings.Join(mcpParts, ", "))
 			b.WriteString("\n")
 		}
 	}
