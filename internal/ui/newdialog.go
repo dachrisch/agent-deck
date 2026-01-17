@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/asheshgoplani/agent-deck/internal/git"
-	"github.com/asheshgoplani/agent-deck/internal/session"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -39,7 +38,38 @@ type NewDialog struct {
 
 // NewNewDialog creates a new NewDialog instance
 func NewNewDialog() *NewDialog {
-	// ... existing initialization ...
+	// Create name input
+	nameInput := textinput.New()
+	nameInput.Placeholder = "session-name"
+	nameInput.Focus()
+	nameInput.CharLimit = 100
+	nameInput.Width = 40
+
+	// Create path input
+	pathInput := textinput.New()
+	pathInput.Placeholder = "~/project/path"
+	pathInput.CharLimit = 256
+	pathInput.Width = 40
+	pathInput.ShowSuggestions = true // enable built-in suggestions
+
+	// Get current working directory for default path
+	cwd, err := os.Getwd()
+	if err == nil {
+		pathInput.SetValue(cwd)
+	}
+
+	// Create command input
+	commandInput := textinput.New()
+	commandInput.Placeholder = "custom command"
+	commandInput.CharLimit = 100
+	commandInput.Width = 40
+
+	// Create branch input for worktree
+	branchInput := textinput.New()
+	branchInput.Placeholder = "feature/branch-name"
+	branchInput.CharLimit = 100
+	branchInput.Width = 40
+
 	return &NewDialog{
 		nameInput:       nameInput,
 		pathInput:       pathInput,
@@ -85,7 +115,6 @@ func (d *NewDialog) ShowInGroup(groupPath, groupName, defaultPath string) {
 			d.pathInput.SetValue(cwd)
 		}
 	}
-	// Note: geminiYoloMode state is managed by SetDefaultTool and Update loop
 }
 
 // SetDefaultTool sets the pre-selected command based on tool name

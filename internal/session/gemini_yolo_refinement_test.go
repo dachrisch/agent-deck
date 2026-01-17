@@ -65,7 +65,7 @@ func TestInstance_UpdateGeminiSession_DetectsYoloFromEnv(t *testing.T) {
 	defer func() { _ = inst.Kill() }()
 
 	tmuxSess := inst.GetTmuxSession()
-	
+
 	// Simulate YOLO mode being enabled in the environment (e.g. by a previous session)
 	_ = tmuxSess.SetEnvironment("GEMINI_YOLO_MODE", "true")
 
