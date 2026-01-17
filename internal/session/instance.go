@@ -762,7 +762,28 @@ func (i *Instance) UpdateClaudeSession(excludeIDs map[string]bool) {
 	}
 }
 
-// UpdateGeminiSession updates the Gemini session ID from tmux environment.
+// SetGeminiYoloMode sets the YOLO mode for Gemini and syncs it to the tmux environment
+// This prevents race conditions where the background status worker might revert
+// the value before a session restart completes.
+func (i *Instance) SetGeminiYoloMode(enabled bool) {
+	if i.Tool != "gemini" {
+		return
+	}
+
+	i.GeminiYoloMode = &enabled
+
+	// Sync to tmux environment immediately if session exists
+	// This ensures background detection (UpdateGeminiSession) sees the new value
+	if i.tmuxSession != nil && i.tmuxSession.Exists() {
+		val := "false"
+		if enabled {
+			val = "true"
+		}
+		_ = i.tmuxSession.SetEnvironment("GEMINI_YOLO_MODE", val)
+	}
+}
+
+// UpdateGeminiSession updates the Gemini session ID and YOLO mode from tmux environment.
 // The capture-resume pattern (used in Start/Restart) sets GEMINI_SESSION_ID
 // in the tmux environment, making this the single authoritative source.
 //
@@ -779,6 +800,29 @@ func (i *Instance) UpdateGeminiSession(excludeIDs map[string]bool) {
 				i.GeminiSessionID = sessionID
 			}
 			i.GeminiDetectedAt = time.Now()
+		}
+
+		// Detect YOLO mode from tmux environment GEMINI_YOLO_MODE=true
+		if yoloVal, err := i.tmuxSession.GetEnvironment("GEMINI_YOLO_MODE"); err == nil {
+			isYolo := yoloVal == "true"
+			if i.GeminiYoloMode == nil || *i.GeminiYoloMode != isYolo {
+				i.GeminiYoloMode = &isYolo
+			}
+		} else {
+			// Fallback: Check command lines of all processes in the pane for --yolo flag
+			if cmdlines, err := i.tmuxSession.GetPaneCommandLines(); err == nil {
+				// Search for --yolo flag in any process command line in the pane
+				isYolo := false
+				for _, cmdline := range cmdlines {
+					if strings.Contains(cmdline, "--yolo") {
+						isYolo = true
+						break
+					}
+				}
+				if i.GeminiYoloMode == nil || *i.GeminiYoloMode != isYolo {
+					i.GeminiYoloMode = &isYolo
+				}
+			}
 		}
 	}
 

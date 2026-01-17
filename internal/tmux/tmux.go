@@ -1998,16 +1998,99 @@ func CleanupOrphanedLogs() (removed int, freedBytes int64, err error) {
 		// Remove orphaned log
 		size := info.Size()
 		if err := os.Remove(logPath); err != nil {
-			debugLog("Failed to remove orphaned log %s: %v", entry.Name(), err)
+			debugLog("Failed to remove orphan log %s: %v", entry.Name(), err)
 			continue
 		}
-
 		removed++
 		freedBytes += size
-		debugLog("Removed orphaned log: %s (%.1f KB)", entry.Name(), float64(size)/1024)
 	}
 
 	return removed, freedBytes, nil
+}
+
+// GetPaneCommandLines returns the command lines of all processes running in the active pane
+// This is useful for detecting flags like --yolo in already running sessions,
+// even if they are children of a shell.
+func (s *Session) GetPaneCommandLines() ([]string, error) {
+	// 1. Get the TTY of the active pane
+	cmd := exec.Command("tmux", "list-panes", "-t", s.Name, "-F", "#{pane_tty}")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pane TTY: %w", err)
+	}
+
+	tty := strings.TrimSpace(string(output))
+	if tty == "" {
+		return nil, fmt.Errorf("no TTY for pane")
+	}
+
+	// 2. Use ps to get all commands running on this TTY
+	// -t: filter by TTY
+	// -o command=: output only the command line, no header
+	psCmd := exec.Command("ps", "-t", tty, "-o", "command=")
+	psOutput, err := psCmd.Output()
+	if err != nil {
+		// If ps -t fails (some platforms/configurations), fall back to pane PID
+		return s.getPaneCommandLinesLegacy()
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(psOutput)), "\n")
+	var result []string
+	for _, line := range lines {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result, nil
+}
+
+// getPaneCommandLinesLegacy is a fallback that only checks the main pane PID and its children
+func (s *Session) getPaneCommandLinesLegacy() ([]string, error) {
+	cmd := exec.Command("tmux", "list-panes", "-t", s.Name, "-F", "#{pane_pid}")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pane PID: %w", err)
+	}
+
+	pid := strings.TrimSpace(string(output))
+	if pid == "" {
+		return nil, fmt.Errorf("no process running in pane")
+	}
+
+	var result []string
+
+	// Check the main PID
+	if cmdline, err := s.getProcessCmdline(pid); err == nil {
+		result = append(result, cmdline)
+	}
+
+	// Try to get children PIDs (Linux specific)
+	psCmd := exec.Command("pgrep", "-P", pid)
+	if pids, err := psCmd.Output(); err == nil {
+		for _, childPid := range strings.Split(strings.TrimSpace(string(pids)), "\n") {
+			if childPid = strings.TrimSpace(childPid); childPid != "" {
+				if cmdline, err := s.getProcessCmdline(childPid); err == nil {
+					result = append(result, cmdline)
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func (s *Session) getProcessCmdline(pid string) (string, error) {
+	cmdlinePath := fmt.Sprintf("/proc/%s/cmdline", pid)
+	data, err := os.ReadFile(cmdlinePath)
+	if err != nil {
+		psCmd := exec.Command("ps", "-p", pid, "-o", "command=")
+		psOutput, psErr := psCmd.Output()
+		if psErr != nil {
+			return "", psErr
+		}
+		return strings.TrimSpace(string(psOutput)), nil
+	}
+	return strings.ReplaceAll(string(data), "\x00", " "), nil
 }
 
 // RunLogMaintenance performs all log maintenance tasks based on settings
