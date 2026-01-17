@@ -6,7 +6,7 @@
     - [x] Task: Write failing unit tests in `internal/session/instance_test.go` to verify `SetGeminiYoloMode` updates the struct and the tmux environment (`GEMINI_YOLO_MODE`)
     - [x] Task: Implement `SetGeminiYoloMode(enabled bool)` in `internal/session/instance.go`
     - [x] Task: Update `UpdateGeminiSession` in `internal/session/instance.go` to detect YOLO mode from the tmux environment variable or process command line
-- [ ] Task: Conductor - User Manual Verification 'Foundation and State Synchronization' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Foundation and State Synchronization' (Protocol in workflow.md)
 
 ## Phase 2: Command Building and Persistence
 - [x] Task: Refine `buildGeminiCommand` for consistent flag application [TDD] [502598]
@@ -14,7 +14,7 @@
     - [x] Task: Update `buildGeminiCommand` in `internal/session/instance.go` to handle environment injection and flag persistence across restarts
 - [x] Task: Ensure YOLO state persistence in storage [504367]
     - [x] Task: Verify/Update `internal/session/storage.go` to correctly map the `GeminiYoloMode` field during save/load operations
-- [ ] Task: Conductor - User Manual Verification 'Command Building and Persistence' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Command Building and Persistence' (Protocol in workflow.md)
 
 ## Phase 3: UI Polish and Interactions
 - [x] Task: Implement `[YOLO]` badge and UI indicators [633631]
@@ -23,10 +23,10 @@
 - [x] Task: Implement TUI hotkey and restart flow [633631]
     - [x] Task: Add `y` hotkey handling in `internal/ui/home.go` to trigger the `ConfirmYoloRestart` dialog
     - [x] Task: Implement the restart logic in `handleConfirmDialogKey` to apply the mode change and trigger a session restart
-- [ ] Task: Conductor - User Manual Verification 'UI Polish and Interactions' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'UI Polish and Interactions' (Protocol in workflow.md)
 
 ## Phase 4: Final Verification and Cleanup
-- [ ] Task: Project-wide verification and quality check
-    - [ ] Task: Run `make fmt` and `make lint` across the codebase
-    - [ ] Task: Run all project tests `go test ./...` and ensure >80% coverage for new/modified code
-- [ ] Task: Conductor - User Manual Verification 'Final Verification and Cleanup' (Protocol in workflow.md)
+- [x] Task: Project-wide verification and quality check [718429]
+    - [x] Task: Run `make fmt` and `make lint` across the codebase
+    - [x] Task: Run all project tests `go test ./...` and ensure >80% coverage for new/modified code
+- [x] Task: Conductor - User Manual Verification 'Final Verification and Cleanup' (Protocol in workflow.md)
