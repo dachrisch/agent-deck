@@ -361,7 +361,7 @@ func (d *PromptDetector) hasShellPrompt(content string) bool {
 // can cause catastrophic backtracking on malformed escape sequences.
 func StripANSI(content string) string {
 	// Fast path: if no escape chars, return as-is
-	if !strings.ContainsAny(content, "\x1b\x9B") {
+	if !strings.Contains(content, "\x1b") && !strings.Contains(content, "\x9b") {
 		return content
 	}
 

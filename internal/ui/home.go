@@ -1085,18 +1085,6 @@ func (h *Home) getInstanceByID(id string) *session.Instance {
 	return h.instanceByID[id]
 }
 
-// getDefaultPathForGroup returns the default path for a group
-// Returns empty string if group not found or no default path set
-func (h *Home) getDefaultPathForGroup(groupPath string) string {
-	if h.groupTree == nil {
-		return ""
-	}
-	if group, exists := h.groupTree.Groups[groupPath]; exists {
-		return group.DefaultPath
-	}
-	return ""
-}
-
 // statusWorker runs in a background goroutine (Priority 1C)
 // It receives status update requests and processes them without blocking the UI
 func (h *Home) statusWorker() {
