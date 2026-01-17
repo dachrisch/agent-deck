@@ -17,12 +17,12 @@
 - [ ] Task: Conductor - User Manual Verification 'Command Building and Persistence' (Protocol in workflow.md)
 
 ## Phase 3: UI Polish and Interactions
-- [ ] Task: Implement `[YOLO]` badge and UI indicators
-    - [ ] Task: Update `internal/ui/home.go` to render the `[YOLO]` badge in the session list and preview pane
-    - [ ] Task: Update `internal/ui/newdialog.go` to support the refined YOLO toggle logic (`y` key) while maintaining the `geminiYoloMode` naming convention
-- [ ] Task: Implement TUI hotkey and restart flow
-    - [ ] Task: Add `y` hotkey handling in `internal/ui/home.go` to trigger the `ConfirmYoloRestart` dialog
-    - [ ] Task: Implement the restart logic in `handleConfirmDialogKey` to apply the mode change and trigger a session restart
+- [x] Task: Implement `[YOLO]` badge and UI indicators [633631]
+    - [x] Task: Update `internal/ui/home.go` to render the `[YOLO]` badge in the session list and preview pane
+    - [x] Task: Update `internal/ui/newdialog.go` to support the refined YOLO toggle logic (`y` key) while maintaining the `geminiYoloMode` naming convention
+- [x] Task: Implement TUI hotkey and restart flow [633631]
+    - [x] Task: Add `y` hotkey handling in `internal/ui/home.go` to trigger the `ConfirmYoloRestart` dialog
+    - [x] Task: Implement the restart logic in `handleConfirmDialogKey` to apply the mode change and trigger a session restart
 - [ ] Task: Conductor - User Manual Verification 'UI Polish and Interactions' (Protocol in workflow.md)
 
 ## Phase 4: Final Verification and Cleanup
