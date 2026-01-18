@@ -138,14 +138,15 @@ func (c *ConfirmDialog) View() string {
 			details = "• Session will restart to apply the new mode\n• YOLO mode skips all security confirmations\n• Use only in trusted environments"
 		}
 	
-		// Styles
-		accentColor := ColorRed
-		if c.confirmType == ConfirmRestart || c.confirmType == ConfirmYoloRestart {
-			accentColor = ColorCyan
-		}
-	
-		titleStyle := lipgloss.NewStyle().
-			Bold(true).
+			// Styles
+			accentColor := ColorRed
+			if c.confirmType == ConfirmRestart {
+				accentColor = ColorCyan
+			} else if c.confirmType == ConfirmYoloRestart {
+				accentColor = ColorYellow
+			}
+		
+			titleStyle := lipgloss.NewStyle().			Bold(true).
 			Foreground(accentColor).
 			MarginBottom(1)
 	

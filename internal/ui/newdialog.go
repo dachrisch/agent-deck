@@ -625,6 +625,7 @@ func (d *NewDialog) View() string {
 	labelStyle := lipgloss.NewStyle().Foreground(ColorText)
 	checkboxStyle := lipgloss.NewStyle().Foreground(ColorText)
 	checkboxActiveStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+	yoloActiveStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
 
 	// Session Name
 	if d.focusIndex == 0 {
@@ -694,7 +695,7 @@ func (d *NewDialog) View() string {
 
 		if d.focusIndex == 2 {
 			// When on command field, show as actionable
-			content.WriteString(checkboxActiveStyle.Render(fmt.Sprintf("  %s YOLO mode - auto-approve all (press y)", yoloCheckbox)))
+			content.WriteString(yoloActiveStyle.Render(fmt.Sprintf("  %s YOLO mode - auto-approve all (press y)", yoloCheckbox)))
 		} else {
 			content.WriteString(checkboxStyle.Render(fmt.Sprintf("  %s YOLO mode - auto-approve all", yoloCheckbox)))
 		}

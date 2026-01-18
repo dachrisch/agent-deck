@@ -4683,13 +4683,13 @@ func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected
 					isYolo = userConfig.Gemini.YoloMode
 				}
 			}
-			if isYolo {
-				yoloStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
-				tool += " " + yoloStyle.Render("[YOLO]")
-			}
-		}
-	
-		// Build row: [baseIndent][selection][tree][status] [title] [tool]	// Format: " ├─ ● session-name tool" or "▶└─ ● session-name tool"
+					if isYolo {
+						yoloStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
+						tool += " " + yoloStyle.Render("[YOLO]")
+					}
+				}
+			
+				// Build row: [baseIndent][selection][tree][status] [title] [tool]	// Format: " ├─ ● session-name tool" or "▶└─ ● session-name tool"
 	// Sub-sessions get extra indent: "   ├─◐ sub-session tool"
 	row := fmt.Sprintf("%s%s%s %s %s%s", baseIndent, selectionPrefix, treeStyle.Render(treeConnector), status, title, tool)
 	b.WriteString(row)
@@ -5072,19 +5072,18 @@ func (h *Home) renderPreviewPane(width, height int) string {
 					isYolo = userConfig.Gemini.YoloMode
 				}
 			}
-			if isYolo {
-				yoloBadge := lipgloss.NewStyle().
-					Foreground(ColorBg).
-					Background(ColorCyan).
-					Padding(0, 1).
-					Bold(true).
-					Render("YOLO")
-				b.WriteString(" ")
-				b.WriteString(yoloBadge)
-			}
-		}
-		b.WriteString("\n")
-	// Claude-specific info (session ID and MCPs)
+					if isYolo {
+						yoloBadge := lipgloss.NewStyle().
+							Foreground(ColorBg).
+							Background(ColorYellow).
+							Padding(0, 1).
+							Bold(true).
+							Render("YOLO")
+						b.WriteString(" ")
+						b.WriteString(yoloBadge)
+					}
+				}
+				b.WriteString("\n")	// Claude-specific info (session ID and MCPs)
 	if selected.Tool == "claude" {
 		// Section divider for Claude info
 		claudeHeader := renderSectionDivider("Claude", width-4)
