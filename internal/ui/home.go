@@ -3030,10 +3030,6 @@ func (h *Home) getUsedClaudeSessionIDs() map[string]bool {
 	return usedIDs
 }
 
-// createSessionInGroup creates a new session in a specific group
-func (h *Home) createSessionInGroup(name, path, command, groupPath string) tea.Cmd {
-	return h.createSessionInGroupWithWorktree(name, path, command, groupPath, "", "", "", false, nil)
-}
 
 func (h *Home) createSessionInGroupWithWorktree(name, path, command, groupPath, worktreePath, worktreeRepoRoot, worktreeBranch string, geminiYoloMode bool, claudeOpts *session.ClaudeOptions) tea.Cmd {
 	return func() tea.Msg {
