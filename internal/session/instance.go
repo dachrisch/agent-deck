@@ -876,6 +876,9 @@ func (i *Instance) UpdateGeminiSession(excludeIDs map[string]bool) {
 
 	// Update latest prompt from session file
 	if i.GeminiSessionID != "" {
+		if i.GeminiAnalytics == nil {
+			i.GeminiAnalytics = &GeminiSessionAnalytics{}
+		}
 		_ = UpdateGeminiAnalyticsFromDisk(i.ProjectPath, i.GeminiSessionID, i.GeminiAnalytics)
 	}
 }
