@@ -2654,21 +2654,21 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
-		case "R":
-			// Restart session (Shift+R - recreate tmux session with resume)
-			if h.cursor < len(h.flatItems) {
-				item := h.flatItems[h.cursor]
-				if item.Type == session.ItemTypeSession && item.Session != nil {
-					if item.Session.CanRestart() {
-						h.confirmDialog.ShowRestart(item.Session.ID, item.Session.Title)
+			case "R":
+				// Restart session (Shift+R - recreate tmux session with resume)
+				if h.cursor < len(h.flatItems) {
+					item := h.flatItems[h.cursor]
+					if item.Type == session.ItemTypeSession && item.Session != nil {
+						if item.Session.CanRestart() {
+							h.confirmDialog.ShowRestart(item.Session.ID, item.Session.Title)
+						}
 					}
 				}
-			}
-			return h, nil
-	
-		// Manual refresh (useful if watcher fails or for user preference)
-		state := h.preserveState()
-
+				return h, nil
+		
+			case "ctrl+r":
+				// Manual refresh (useful if watcher fails or for user preference)
+				state := h.preserveState()
 		cmd := func() tea.Msg {
 			instances, groups, err := h.storage.LoadWithGroups()
 			return loadSessionsMsg{
@@ -3043,7 +3043,6 @@ func (h *Home) createSessionInGroupWithWorktree(name, path, command, groupPath, 
 		}
 
 		// Determine tool from command for proper session initialization
-		// When tool is "claude", session ID will be detected from files after start
 		tool := "shell"
 		switch command {
 		case "claude":
@@ -3078,7 +3077,7 @@ func (h *Home) createSessionInGroupWithWorktree(name, path, command, groupPath, 
 
 		// Apply Claude options if provided
 		if tool == "claude" && claudeOpts != nil {
-			inst.SetClaudeOptions(claudeOpts)
+			_ = inst.SetClaudeOptions(claudeOpts)
 		}
 
 		if err := inst.Start(); err != nil {
@@ -3087,7 +3086,6 @@ func (h *Home) createSessionInGroupWithWorktree(name, path, command, groupPath, 
 		return sessionCreatedMsg{instance: inst}
 	}
 }
-// quickForkSession performs a quick fork with default title suffix " (fork)"
 func (h *Home) quickForkSession(source *session.Instance) tea.Cmd {
 	if source == nil {
 		return nil

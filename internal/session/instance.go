@@ -876,9 +876,7 @@ func (i *Instance) UpdateGeminiSession(excludeIDs map[string]bool) {
 
 	// Update latest prompt from session file
 	if i.GeminiSessionID != "" {
-		if err := UpdateGeminiAnalyticsFromDisk(i.ProjectPath, i.GeminiSessionID, i.GeminiAnalytics); err == nil {
-			// Analytics update successful
-		}
+		_ = UpdateGeminiAnalyticsFromDisk(i.ProjectPath, i.GeminiSessionID, i.GeminiAnalytics)
 	}
 }
 
@@ -1222,35 +1220,7 @@ func parseClaudeLatestUserPrompt(data []byte) (string, error) {
 	return latestPrompt, nil
 }
 
-// parseGeminiLatestUserPrompt parses a Gemini JSON file to extract the last user message
-func parseGeminiLatestUserPrompt(data []byte) (string, error) {
-	var session struct {
-		Messages []struct {
-			Type    string `json:"type"` // "user" or "gemini"
-			Content string `json:"content"`
-		} `json:"messages"`
-	}
-
-	if err := json.Unmarshal(data, &session); err != nil {
-		return "", fmt.Errorf("failed to parse Gemini session: %w", err)
-	}
-
-	var latestPrompt string
-	// Find last "user" type message
-	for i := len(session.Messages) - 1; i >= 0; i-- {
-		msg := session.Messages[i]
-		if msg.Type == "user" {
-			// Sanitize: strip newlines and extra spaces for single-line display
-			content := strings.ReplaceAll(msg.Content, "\n", " ")
-			latestPrompt = strings.Join(strings.Fields(content), " ")
-			break
-		}
-	}
-
-	return latestPrompt, nil
-}
-
-// getGeminiLastResponse extracts the last assistant message from Gemini's JSON file
+// UpdateClaudeSession updates the Claude session ID from tmux environment.
 func (i *Instance) getGeminiLastResponse() (*ResponseOutput, error) {
 	// Require stored session ID - no fallback to file scanning
 	if i.GeminiSessionID == "" || len(i.GeminiSessionID) < 8 {
@@ -1779,7 +1749,7 @@ func (i *Instance) CreateForkedInstanceWithOptions(newTitle, newGroupPath string
 
 	// Store options in the new instance for persistence
 	if opts != nil {
-		forked.SetClaudeOptions(opts)
+		_ = forked.SetClaudeOptions(opts)
 	}
 
 	return forked, cmd, nil

@@ -409,15 +409,18 @@ func TestBuildClaudeCommand_CustomAlias(t *testing.T) {
 	tmpDir := t.TempDir()
 	os.Setenv("HOME", tmpDir)
 
-	// Create ~/.agent-deck/config.toml with custom command
-	configDir := filepath.Join(tmpDir, ".agent-deck")
-	os.MkdirAll(configDir, 0755)
-	configContent := `[claude]
-command = "cdw"
-config_dir = "~/.claude-work"
-`
-	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(configContent), 0644)
-
+		// Create ~/.agent-deck/config.toml with custom command
+		configDir := filepath.Join(tmpDir, ".agent-deck")
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			t.Fatalf("failed to create config dir: %v", err)
+		}
+		configContent := `[claude]
+	command = "cdw"
+	config_dir = "~/.claude-work"
+	`
+		if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("failed to write config file: %v", err)
+		}
 	ClearUserConfigCache()
 	defer func() {
 		os.Setenv("HOME", origHome)
