@@ -29,6 +29,9 @@ type GeminiSessionAnalytics struct {
 	StartTime  time.Time     `json:"start_time"`
 	LastActive time.Time     `json:"last_active"`
 
+	// Cache info
+	LastFileModTime time.Time `json:"-"` // Not persisted, only for in-memory caching
+
 	// Cost estimation
 	EstimatedCost float64 `json:"estimated_cost"`
 }

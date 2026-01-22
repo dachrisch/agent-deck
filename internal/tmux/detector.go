@@ -47,10 +47,7 @@ func (d *PromptDetector) HasPrompt(content string) bool {
 			d.hasLineEndingWith(content, ">")
 
 	case "gemini":
-		// From Claude Squad: session/tmux/tmux.go line 284
-		return strings.Contains(content, "Yes, allow once") ||
-			strings.Contains(content, "gemini>") ||
-			d.hasLineEndingWith(content, ">")
+		return d.hasGeminiPrompt(content)
 
 	case "codex":
 		// Codex/OpenAI CLI patterns
@@ -279,6 +276,36 @@ func (d *PromptDetector) hasClaudePrompt(content string) bool {
 	}
 
 	return false
+}
+
+// hasGeminiPrompt detects if Gemini CLI is waiting for input
+func (d *PromptDetector) hasGeminiPrompt(content string) bool {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 {
+		return false
+	}
+
+	// Look at last 15 lines for prompt indicators
+	// We need 15 because the prompt is in a box-drawing UI element
+	checkLines := lines
+	if len(checkLines) > 15 {
+		checkLines = checkLines[len(checkLines)-15:]
+	}
+
+	for _, line := range checkLines {
+		cleanLine := strings.TrimSpace(StripANSI(line))
+		// Standard gemini prompt or placeholder
+		if strings.Contains(cleanLine, "gemini>") ||
+			strings.Contains(cleanLine, "Type your message") ||
+			strings.Contains(cleanLine, "Yes, allow once") ||
+			strings.HasPrefix(cleanLine, "* ") || // Prompt start marker
+			strings.HasPrefix(cleanLine, "✦ ") { // Completed thought marker
+			return true
+		}
+	}
+
+	// Fallback to simple line ending check
+	return d.hasLineEndingWith(content, ">")
 }
 
 // hasLineEndingWith checks if any recent line ends with the given suffix

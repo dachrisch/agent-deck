@@ -46,7 +46,16 @@ func GetAvailableGeminiModels() ([]string, error) {
         apiKey := os.Getenv("GOOGLE_API_KEY")
         if apiKey == "" {
                 // Return common defaults if no API key
-                return []string{"gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"}, nil
+                return []string{
+					"gemini-3-pro-preview",
+					"gemini-3-flash-preview",
+					"gemini-2.5-pro",
+					"gemini-2.5-flash",
+					"gemini-2.5-flash-lite",
+					"gemini-2.0-flash", 
+					"gemini-1.5-flash", 
+					"gemini-1.5-pro",
+				}, nil
         }
 
         url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models?key=%s", apiKey)
@@ -224,10 +233,36 @@ func ListGeminiSessions(projectPath string) ([]GeminiSessionInfo, error) {
 	return sessions, nil
 }
 
+// findNewestFile returns the newest file matching the pattern by modification time
+func findNewestFile(pattern string) string {
+	files, _ := filepath.Glob(pattern)
+	if len(files) == 0 {
+		return ""
+	}
+	if len(files) == 1 {
+		return files[0]
+	}
+
+	var newestFile string
+	var newestTime time.Time
+
+	for _, file := range files {
+		info, err := os.Stat(file)
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(newestTime) {
+			newestTime = info.ModTime()
+			newestFile = file
+		}
+	}
+	return newestFile
+}
+
 // findGeminiSessionInAllProjects searches all Gemini project directories for a session file
 // This handles path hash mismatches when agent-deck runs from a different directory
 // than where the Gemini session was originally created.
-// Returns the full path to the session file, or empty string if not found.
+// Returns the full path to the newest matching session file, or empty string if not found.
 func findGeminiSessionInAllProjects(sessionID string) string {
 	if sessionID == "" || len(sessionID) < 8 {
 		return ""
@@ -245,6 +280,9 @@ func findGeminiSessionInAllProjects(sessionID string) string {
 	// Search pattern: session-*-<uuid8>.json
 	targetPattern := "session-*-" + sessionID[:8] + ".json"
 
+	var newestFile string
+	var newestTime time.Time
+
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -252,12 +290,16 @@ func findGeminiSessionInAllProjects(sessionID string) string {
 
 		chatsDir := filepath.Join(tmpDir, entry.Name(), "chats")
 		pattern := filepath.Join(chatsDir, targetPattern)
-		if files, _ := filepath.Glob(pattern); len(files) > 0 {
-			return files[0]
+		if file := findNewestFile(pattern); file != "" {
+			info, err := os.Stat(file)
+			if err == nil && info.ModTime().After(newestTime) {
+				newestTime = info.ModTime()
+				newestFile = file
+			}
 		}
 	}
 
-	return ""
+	return newestFile
 }
 
 // UpdateGeminiAnalyticsFromDisk updates the analytics struct from the session file on disk
@@ -270,128 +312,88 @@ func UpdateGeminiAnalyticsFromDisk(projectPath, sessionID string, analytics *Gem
 	// Find file matching session ID prefix (first 8 chars)
 	// Filename format: session-YYYY-MM-DDTHH-MM-<uuid8>.json
 	pattern := filepath.Join(sessionsDir, "session-*-"+sessionID[:8]+".json")
-	files, _ := filepath.Glob(pattern)
+	latestFile := findNewestFile(pattern)
 
 	// Fallback: search across all projects if not found in expected location
-	// This handles path hash mismatches (e.g., session created from different directory)
-	if len(files) == 0 {
-		if fallbackPath := findGeminiSessionInAllProjects(sessionID); fallbackPath != "" {
-			files = []string{fallbackPath}
-		}
+	if latestFile == "" {
+		latestFile = findGeminiSessionInAllProjects(sessionID)
 	}
 
-	if len(files) == 0 {
+	if latestFile == "" {
 		return fmt.Errorf("session file not found")
 	}
 
-	data, err := os.ReadFile(files[0])
+	// PERFORMANCE OPTIMIZATION: Check modification time before parsing (especially for 40MB+ files)
+	info, err := os.Stat(latestFile)
+	if err == nil && !analytics.LastFileModTime.IsZero() && info.ModTime().Equal(analytics.LastFileModTime) {
+		// File hasn't changed since last parse, skip expensive Unmarshal
+		return nil
+	}
+
+	data, err := os.ReadFile(latestFile)
 	if err != nil {
 		return fmt.Errorf("failed to read session file: %w", err)
 	}
 
-	        var session struct {
+	var session struct {
+		SessionID   string `json:"sessionId"`
+		StartTime   string `json:"startTime"`
+		LastUpdated string `json:"lastUpdated"`
+		Messages    []struct {
+			Type   string `json:"type"`
+			Model  string `json:"model,omitempty"`
+			Tokens struct {
+				Input  int `json:"input"`
+				Output int `json:"output"`
+			} `json:"tokens"`
+		} `json:"messages"`
+	}
 
-	                SessionID   string `json:"sessionId"`
+	if err := json.Unmarshal(data, &session); err != nil {
+		return fmt.Errorf("failed to parse session for analytics: %w", err)
+	}
 
-	                StartTime   string `json:"startTime"`
+	// Record mtime for next cache check
+	if info != nil {
+		analytics.LastFileModTime = info.ModTime()
+	}
 
-	                LastUpdated string `json:"lastUpdated"`
+	// Parse timestamps
+	startTime, _ := time.Parse(time.RFC3339, session.StartTime)
+	if startTime.IsZero() {
+		startTime, _ = time.Parse("2006-01-02T15:04:05.999Z", session.StartTime)
+	}
 
-	                Messages    []struct {
+	lastUpdated, _ := time.Parse(time.RFC3339, session.LastUpdated)
+	if lastUpdated.IsZero() {
+		lastUpdated, _ = time.Parse("2006-01-02T15:04:05.999Z", session.LastUpdated)
+	}
 
-	                        Type   string `json:"type"`
+	analytics.StartTime = startTime
+	analytics.LastActive = lastUpdated
 
-	                        Model  string `json:"model,omitempty"`
+	if !startTime.IsZero() && !lastUpdated.IsZero() {
+		analytics.Duration = lastUpdated.Sub(startTime)
+	}
 
-	                        Tokens struct {
+	// Reset and accumulate tokens
+	analytics.InputTokens = 0
+	analytics.OutputTokens = 0
+	analytics.TotalTurns = 0
+	analytics.Model = "" // Reset model
 
-	                                Input  int `json:"input"`
+	for _, msg := range session.Messages {
+		if msg.Type == "gemini" {
+			analytics.InputTokens += msg.Tokens.Input
+			analytics.OutputTokens += msg.Tokens.Output
+			analytics.TotalTurns++
 
-	                                Output int `json:"output"`
+			// Capture model from the last gemini message
+			if msg.Model != "" {
+				analytics.Model = msg.Model
+			}
 
-	                        } `json:"tokens"`
-
-	                } `json:"messages"`
-
-	        }
-
-	
-
-	        if err := json.Unmarshal(data, &session); err != nil {
-
-	                return fmt.Errorf("failed to parse session for analytics: %w", err)
-
-	        }
-
-	
-
-	        // Parse timestamps
-
-	        startTime, _ := time.Parse(time.RFC3339, session.StartTime)
-
-	        if startTime.IsZero() {
-
-	                startTime, _ = time.Parse("2006-01-02T15:04:05.999Z", session.StartTime)
-
-	        }
-
-	        lastUpdated, _ := time.Parse(time.RFC3339, session.LastUpdated)
-
-	        if lastUpdated.IsZero() {
-
-	                lastUpdated, _ = time.Parse("2006-01-02T15:04:05.999Z", session.LastUpdated)
-
-	        }
-
-	
-
-	        analytics.StartTime = startTime
-
-	        analytics.LastActive = lastUpdated
-
-	        if !startTime.IsZero() && !lastUpdated.IsZero() {
-
-	                analytics.Duration = lastUpdated.Sub(startTime)
-
-	        }
-
-	
-
-	        // Reset and accumulate tokens
-
-	        analytics.InputTokens = 0
-
-	        analytics.OutputTokens = 0
-
-	        analytics.TotalTurns = 0
-
-	        analytics.Model = "" // Reset model
-
-	        for _, msg := range session.Messages {
-
-	                if msg.Type == "gemini" {
-
-	                        analytics.InputTokens += msg.Tokens.Input
-
-	                        analytics.OutputTokens += msg.Tokens.Output
-
-	                        analytics.TotalTurns++
-
-	
-
-	                        // Capture model from the last gemini message
-
-	                        if msg.Model != "" {
-
-	                                analytics.Model = msg.Model
-
-	                        }
-
-	
-
-	                        // For Gemini, the input tokens of the last message represent the total context size
-
-	
+			// For Gemini, the input tokens of the last message represent the total context size
 			// including history and current prompt.
 			analytics.CurrentContextTokens = msg.Tokens.Input
 		}

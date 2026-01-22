@@ -72,7 +72,8 @@ type Instance struct {
 	CodexStartedAt  int64     `json:"-"` // Unix millis when we started Codex (for session matching, not persisted)
 
 	// Latest user input for context (extracted from session files)
-	LatestPrompt string `json:"latest_prompt,omitempty"`
+	LatestPrompt        string    `json:"latest_prompt,omitempty"`
+	LastPromptModTime   time.Time `json:"-"` // Not persisted, for in-memory caching
 
 	// MCP tracking - which MCPs were loaded when session started/restarted
 	// Used to detect pending MCPs (added after session start) and stale MCPs (removed but still running)
@@ -1377,19 +1378,26 @@ func (i *Instance) UpdateGeminiSession(excludeIDs map[string]bool) {
 	if i.GeminiSessionID != "" && len(i.GeminiSessionID) >= 8 {
 		sessionsDir := GetGeminiSessionsDir(i.ProjectPath)
 		pattern := filepath.Join(sessionsDir, "session-*-"+i.GeminiSessionID[:8]+".json")
-		files, _ := filepath.Glob(pattern)
+		latestFile := findNewestFile(pattern)
 
 		// Fallback: cross-project search
-		if len(files) == 0 {
-			if fallbackPath := findGeminiSessionInAllProjects(i.GeminiSessionID); fallbackPath != "" {
-				files = []string{fallbackPath}
-			}
+		if latestFile == "" {
+			latestFile = findGeminiSessionInAllProjects(i.GeminiSessionID)
 		}
 
-		if len(files) > 0 {
-			if data, err := os.ReadFile(files[0]); err == nil {
-				if prompt, err := parseGeminiLatestUserPrompt(data); err == nil && prompt != "" {
-					i.LatestPrompt = prompt
+		if latestFile != "" {
+			// PERFORMANCE OPTIMIZATION: Check modification time before parsing
+			info, err := os.Stat(latestFile)
+			if err == nil && !i.LastPromptModTime.IsZero() && info.ModTime().Equal(i.LastPromptModTime) {
+				// File hasn't changed, skip parse but CONTINUE with other detection logic
+			} else {
+				if data, err := os.ReadFile(latestFile); err == nil {
+					if prompt, err := parseGeminiLatestUserPrompt(data); err == nil && prompt != "" {
+						i.LatestPrompt = prompt
+						if info != nil {
+							i.LastPromptModTime = info.ModTime()
+						}
+					}
 				}
 			}
 		}

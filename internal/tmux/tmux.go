@@ -1168,13 +1168,6 @@ func (s *Session) GetStatus() (string, error) {
 			}
 			debugLog("%s: needsBusyCheck busy=%v lastLine=%q", shortName, isExplicitlyBusy, lastLine)
 
-			// Update content hash for spike detection (used later to confirm real activity)
-			cleanContent := s.normalizeContent(content)
-			currentHash := s.hashContent(cleanContent)
-			if currentHash != "" {
-				s.stateTracker.lastHash = currentHash
-			}
-
 			// GREEN only if explicit busy indicator found
 			// Content hash changes alone should NOT trigger GREEN here - they must
 			// go through spike detection (2+ changes in 1s) to filter cursor blinks
@@ -1185,6 +1178,14 @@ func (s *Session) GetStatus() (string, error) {
 				s.lastStableStatus = "active"
 				debugLog("%s: BUSY_INDICATOR → active", shortName)
 				return "active", nil
+			}
+
+			// NOT explicitly busy - baseline the hash for spike detection
+			// This allows the NEXT tick to detect changes if they are sustained
+			cleanContent := s.normalizeContent(content)
+			currentHash := s.hashContent(cleanContent)
+			if currentHash != "" {
+				s.stateTracker.lastHash = currentHash
 			}
 		}
 	}
@@ -1250,28 +1251,32 @@ func (s *Session) GetStatus() (string, error) {
 					// Check for explicit busy indicator (spinner, "ctrl+c to interrupt")
 					isExplicitlyBusy := s.hasBusyIndicator(content)
 
-					// Update content hash for tracking (but NOT used for GREEN decision)
+					// Normalize and hash for decision
 					cleanContent := s.normalizeContent(content)
 					currentHash := s.hashContent(cleanContent)
-					if currentHash != "" {
-						s.stateTracker.lastHash = currentHash
-					}
 
-					// Only GREEN if explicit busy indicator found
-					// Content hash changes alone are NOT reliable - cursor blinks,
-					// terminal redraws, and status bar updates can cause hash changes
-					if isExplicitlyBusy {
+					// GREEN if explicit busy indicator found OR if content has changed
+					// after normalization (sustained activity confirmed by hash change).
+					// normalization filters out cursor blinks and status bar updates.
+					hashChanged := currentHash != "" && currentHash != s.stateTracker.lastHash
+					if isExplicitlyBusy || hashChanged {
+						s.stateTracker.lastHash = currentHash // Baseline for next window
 						s.stateTracker.lastChangeTime = now
 						s.stateTracker.acknowledged = false
 						s.stateTracker.activityCheckStart = time.Time{} // Reset window
 						s.stateTracker.activityChangeCount = 0
 						s.lastStableStatus = "active"
-						debugLog("%s: SUSTAINED CONFIRMED (busy indicator) → active", shortName)
+						debugLog("%s: SUSTAINED CONFIRMED (hashChanged=%v) → active", shortName, hashChanged)
 						return "active", nil
 					}
 
-					// No busy indicator - spike was false positive (cursor blink, status bar, etc.)
-					debugLog("%s: SUSTAINED REJECTED (no busy indicator)", shortName)
+					// Update baseline even if not GREEN to follow sliding content
+					if currentHash != "" {
+						s.stateTracker.lastHash = currentHash
+					}
+
+					// No busy indicator and no hash change - spike was false positive
+					debugLog("%s: SUSTAINED REJECTED (no busy indicator or hash change)", shortName)
 				}
 
 				// Reset spike tracking - the activity was not real
@@ -1545,7 +1550,32 @@ func (s *Session) hasBusyIndicator(content string) bool {
 	}
 
 	// ═══════════════════════════════════════════════════════════════════════
-	// CHECK 4: Custom busy patterns from config.toml
+	// CHECK 4: AI status messages (thinking, analyzing, whimsical words)
+	// Check only last 10 lines for these strings to avoid finding them in history
+	// ═══════════════════════════════════════════════════════════════════════
+	last10 := lastLines
+	if len(last10) > 10 {
+		last10 = last10[len(last10)-10:]
+	}
+	recent10 := strings.ToLower(strings.Join(last10, "\n"))
+
+	// Check for standard status keywords
+	statusKeywords := []string{"thinking...", "analyzing...", "researching...", "esc to cancel", "esc to interrupt"}
+	for _, kw := range statusKeywords {
+		if strings.Contains(recent10, kw) {
+			debugLog("%s: BUSY_REASON=%s", shortName, kw)
+			return true
+		}
+	}
+
+	// Check for whimsical words (Claude-style, also used by Gemini CLI)
+	if thinkingPattern.MatchString(recent10) {
+		debugLog("%s: BUSY_REASON=whimsical thinking", shortName)
+		return true
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// CHECK 5: Custom busy patterns from config.toml
 	// Allows custom tools to define their own busy indicators
 	// ═══════════════════════════════════════════════════════════════════════
 	if len(s.customBusyPatterns) > 0 {
@@ -1558,7 +1588,7 @@ func (s *Session) hasBusyIndicator(content string) bool {
 	}
 
 	// ═══════════════════════════════════════════════════════════════════════
-	// CHECK 5: Spinner characters - BACKUP indicator
+	// CHECK 6: Spinner characters - BACKUP indicator
 	// Braille spinner dots from cli-spinners "dots" pattern
 	// Check last 5 lines (spinners appear at status line)
 	// ═══════════════════════════════════════════════════════════════════════
@@ -1569,11 +1599,24 @@ func (s *Session) hasBusyIndicator(content string) bool {
 	}
 
 	for _, line := range last5 {
+		trimmed := strings.TrimSpace(line)
+		// Skip box-drawing lines (static history)
+		if strings.HasPrefix(trimmed, "│") || strings.HasPrefix(trimmed, "├") || strings.HasPrefix(trimmed, "└") {
+			continue
+		}
+
 		for _, spinner := range spinnerChars {
 			if strings.Contains(line, spinner) {
 				debugLog("%s: BUSY_REASON=spinner char=%q", shortName, spinner)
 				return true
 			}
+		}
+
+		// Also check for checkmark (✓) but ONLY in the very last few lines
+		// and only if not a box-drawing line. This avoids static 'gh pr checks' history.
+		if strings.Contains(line, "✓") {
+			debugLog("%s: BUSY_REASON=checkmark", shortName)
+			return true
 		}
 	}
 
@@ -1633,6 +1676,9 @@ var (
 	progressBarPattern = regexp.MustCompile(`\[=*>?\s*\]\s*\d+%`)           // [====>   ] 45%
 	downloadPattern    = regexp.MustCompile(`\d+\.?\d*[KMGT]?B/\d+\.?\d*[KMGT]?B`) // 1.2MB/5.6MB
 	percentagePattern  = regexp.MustCompile(`\b\d{1,3}%`)                   // 45% (word boundary to avoid false matches)
+
+	// Matches common shell clock patterns in prompts: [12:34:56] or 12:34:56
+	timePattern = regexp.MustCompile(`\b\d{1,2}:\d{2}:\d{2}\b`)
 )
 
 // claudeWhimsicalWords contains all 90 whimsical "thinking" words used by Claude Code
@@ -1690,6 +1736,7 @@ func (s *Session) normalizeContent(content string) string {
 	// which updates to "(46s · 1234 tokens · ctrl+c to interrupt)" one second later
 	result = dynamicStatusPattern.ReplaceAllString(result, "(STATUS)")
 	result = thinkingPattern.ReplaceAllString(result, "$1...")
+	result = timePattern.ReplaceAllString(result, "HH:MM:SS")
 
 	// Strip progress indicators that change frequently (Fix 2.1)
 	// These cause hash changes during downloads, builds, etc.
