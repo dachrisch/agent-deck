@@ -438,7 +438,8 @@ func (i *Instance) buildGeminiCommand(baseCommand string) string {
 	if baseCommand == "gemini" {
 		// If we already have a session ID, use simple resume
 		if i.GeminiSessionID != "" {
-			return envPrefix + fmt.Sprintf("tmux set-environment GEMINI_YOLO_MODE %s; gemini --resume %s%s%s", yoloEnv, i.GeminiSessionID, yoloFlag, modelFlag)
+			return envPrefix + fmt.Sprintf("tmux set-environment GEMINI_YOLO_MODE %s; tmux set-environment GEMINI_SESSION_ID %s; gemini --resume %s%s%s",
+				yoloEnv, i.GeminiSessionID, i.GeminiSessionID, yoloFlag, modelFlag)
 		}
 
 		// Start Gemini fresh
@@ -1340,7 +1341,9 @@ func (i *Instance) UpdateGeminiSession(excludeIDs map[string]bool) {
 		_ = UpdateGeminiAnalyticsFromDisk(i.ProjectPath, i.GeminiSessionID, i.GeminiAnalytics)
 
 		// Sync model from analytics if not explicitly set on instance
-		if i.GeminiModel == "" && i.GeminiAnalytics.Model != "" {
+		// Note: We keep GeminiModel empty/auto if user hasn't locked it to a specific model
+		// This enables the auto(detected) label in the UI.
+		if i.GeminiModel != "" && i.GeminiModel != "auto" && i.GeminiAnalytics.Model != "" {
 			i.GeminiModel = i.GeminiAnalytics.Model
 		}
 	}
@@ -1367,8 +1370,11 @@ func (i *Instance) UpdateGeminiSession(excludeIDs map[string]bool) {
 					// Update analytics model (real-time source)
 					i.GeminiAnalytics.Model = detected
 
-					// Update instance model (authoritative source for UI)
-					i.GeminiModel = detected
+					// ONLY update instance model if user has locked a specific model
+					// If it's empty or "auto", we keep it that way to show the auto label in UI
+					if i.GeminiModel != "" && i.GeminiModel != "auto" {
+						i.GeminiModel = detected
+					}
 				}
 			}
 		}
@@ -2050,9 +2056,9 @@ func (i *Instance) Restart() error {
 
 	// If Gemini session with known ID AND tmux session exists, use respawn-pane
 	if i.Tool == "gemini" && i.GeminiSessionID != "" && i.tmuxSession != nil && i.tmuxSession.Exists() {
-		// Build Gemini resume command with tmux env update
-		resumeCmd := fmt.Sprintf("tmux set-environment GEMINI_SESSION_ID %s && gemini --resume %s",
-			i.GeminiSessionID, i.GeminiSessionID)
+		// Build Gemini resume command using the standard builder
+		// This ensures --model and --yolo flags are correctly included
+		resumeCmd := i.buildGeminiCommand("gemini")
 		log.Printf("[RESTART-DEBUG] Gemini using respawn-pane with command: %s", resumeCmd)
 
 		if err := i.tmuxSession.RespawnPane(resumeCmd); err != nil {
@@ -2189,9 +2195,8 @@ func (i *Instance) Restart() error {
 	if i.Tool == "claude" && i.ClaudeSessionID != "" {
 		command = i.buildClaudeResumeCommand()
 	} else if i.Tool == "gemini" && i.GeminiSessionID != "" {
-		// Set GEMINI_SESSION_ID in tmux env so detection works after restart
-		command = fmt.Sprintf("tmux set-environment GEMINI_SESSION_ID %s && gemini --resume %s",
-			i.GeminiSessionID, i.GeminiSessionID)
+		// Use standard builder to ensure --model and --yolo flags are correctly included
+		command = i.buildGeminiCommand("gemini")
 	} else if i.Tool == "opencode" && i.OpenCodeSessionID != "" {
 		// Set OPENCODE_SESSION_ID in tmux env so detection works after restart
 		command = fmt.Sprintf("tmux set-environment OPENCODE_SESSION_ID %s && opencode -s %s",

@@ -124,6 +124,7 @@ func TestInstance_buildGeminiCommand_YoloFlag(t *testing.T) {
 			perSessionYolo: nil,
 			sessionID:      "session-abc-123",
 			expectedContains: []string{
+				"tmux set-environment GEMINI_SESSION_ID session-abc-123",
 				"gemini --resume session-abc-123 --yolo",
 			},
 			expectedNotContain: []string{},
@@ -134,6 +135,7 @@ func TestInstance_buildGeminiCommand_YoloFlag(t *testing.T) {
 			perSessionYolo: nil,
 			sessionID:      "session-abc-123",
 			expectedContains: []string{
+				"tmux set-environment GEMINI_SESSION_ID session-abc-123",
 				"gemini --resume session-abc-123",
 			},
 			expectedNotContain: []string{
@@ -146,6 +148,7 @@ func TestInstance_buildGeminiCommand_YoloFlag(t *testing.T) {
 			perSessionYolo: boolPtr(true),
 			sessionID:      "session-xyz-789",
 			expectedContains: []string{
+				"tmux set-environment GEMINI_SESSION_ID session-xyz-789",
 				"gemini --resume session-xyz-789 --yolo",
 			},
 			expectedNotContain: []string{},
@@ -156,6 +159,7 @@ func TestInstance_buildGeminiCommand_YoloFlag(t *testing.T) {
 			perSessionYolo: boolPtr(false),
 			sessionID:      "session-xyz-789",
 			expectedContains: []string{
+				"tmux set-environment GEMINI_SESSION_ID session-xyz-789",
 				"gemini --resume session-xyz-789",
 			},
 			expectedNotContain: []string{
