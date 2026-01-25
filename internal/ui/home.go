@@ -1812,8 +1812,15 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			inst.GeminiModel = msg.model
 			log.Printf("[MODEL-DEBUG] Updated instance %s with model %s", inst.ID, inst.GeminiModel)
 
-			// Persist changes
-			h.saveInstances()
+			// Clear cached model so the UI shows the manual selection immediately
+			// (Prevents the 'auto' logic from shadowing the manual choice until next poll)
+			if cache, ok := h.geminiAnalyticsCache[inst.ID]; ok {
+				cache.Model = ""
+			}
+
+			// Persist changes IMMEDIATELY and with force
+			// This prevents the change from being lost if a background reload is in progress
+			h.forceSaveInstances()
 
 			// Restart session to apply model change
 			h.resumingSessions[inst.ID] = time.Now()
@@ -3134,7 +3141,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// Toggle: set per-session override to opposite of current
 				newYolo := !currentYolo
 				inst.GeminiYoloMode = &newYolo
-				h.saveInstances()
+				h.forceSaveInstances()
 				// If session is running, it needs restart to apply
 				if inst.Status == session.StatusRunning || inst.Status == session.StatusWaiting {
 					h.resumingSessions[inst.ID] = time.Now()
@@ -5856,9 +5863,12 @@ func (h *Home) renderPreviewPane(width, height int) string {
 
 			// Model dropdown-style field
 			modelLabel := "auto"
-			if selected.GeminiModel != "" && selected.GeminiModel != "auto" {
+			if selected.GeminiModel != "" {
 				modelLabel = selected.GeminiModel
-			} else if selected.GeminiAnalytics != nil && selected.GeminiAnalytics.Model != "" {
+			}
+
+			// If we are in 'auto' mode AND have a detected model, show it
+			if modelLabel == "auto" && selected.GeminiAnalytics != nil && selected.GeminiAnalytics.Model != "" {
 				modelLabel = fmt.Sprintf("auto (%s)", selected.GeminiAnalytics.Model)
 			}
 

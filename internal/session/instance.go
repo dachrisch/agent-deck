@@ -32,11 +32,11 @@ const (
 
 // Instance represents a single agent/shell session
 type Instance struct {
-	ID             string    `json:"id"`
-	Title          string    `json:"title"`
-	ProjectPath    string    `json:"project_path"`
-	GroupPath      string    `json:"group_path"` // e.g., "projects/devops"
-	ParentSessionID   string `json:"parent_session_id,omitempty"`    // Links to parent session (makes this a sub-session)
+	ID                string `json:"id"`
+	Title             string `json:"title"`
+	ProjectPath       string `json:"project_path"`
+	GroupPath         string `json:"group_path"`                    // e.g., "projects/devops"
+	ParentSessionID   string `json:"parent_session_id,omitempty"`   // Links to parent session (makes this a sub-session)
 	ParentProjectPath string `json:"parent_project_path,omitempty"` // Parent's project path (for --add-dir access)
 
 	// Git worktree support
@@ -57,9 +57,9 @@ type Instance struct {
 	// Gemini CLI integration
 	GeminiSessionID  string                  `json:"gemini_session_id,omitempty"`
 	GeminiDetectedAt time.Time               `json:"gemini_detected_at,omitempty"`
-	GeminiModel      string                  `json:"gemini_model,omitempty"`      // Active model for this session
-	GeminiYoloMode   *bool                   `json:"gemini_yolo_mode,omitempty"`   // Per-session override (nil = use global config)
-	GeminiAnalytics  *GeminiSessionAnalytics `json:"gemini_analytics,omitempty"`   // Per-session analytics
+	GeminiModel      string                  `json:"gemini_model,omitempty"`     // Active model for this session
+	GeminiYoloMode   *bool                   `json:"gemini_yolo_mode,omitempty"` // Per-session override (nil = use global config)
+	GeminiAnalytics  *GeminiSessionAnalytics `json:"gemini_analytics,omitempty"` // Per-session analytics
 
 	// OpenCode CLI integration
 	OpenCodeSessionID  string    `json:"opencode_session_id,omitempty"`
@@ -72,8 +72,8 @@ type Instance struct {
 	CodexStartedAt  int64     `json:"-"` // Unix millis when we started Codex (for session matching, not persisted)
 
 	// Latest user input for context (extracted from session files)
-	LatestPrompt        string    `json:"latest_prompt,omitempty"`
-	LastPromptModTime   time.Time `json:"-"` // Not persisted, for in-memory caching
+	LatestPrompt      string    `json:"latest_prompt,omitempty"`
+	LastPromptModTime time.Time `json:"-"` // Not persisted, for in-memory caching
 
 	// MCP tracking - which MCPs were loaded when session started/restarted
 	// Used to detect pending MCPs (added after session start) and stale MCPs (removed but still running)
@@ -764,7 +764,7 @@ func (i *Instance) queryCodexSession() string {
 
 // UpdateCodexSession updates the Codex session ID from tmux environment
 // Fallback: filesystem scan for most recent session
-func (i *Instance) UpdateCodexSession(excludeIDs map[string]bool) {
+func (i *Instance) UpdateCodexSession(_ map[string]bool) {
 	if i.Tool != "codex" {
 		return
 	}
@@ -1077,7 +1077,7 @@ func (i *Instance) sendMessageWhenReady(message string) error {
 	// Track state transitions: we need to see "active" before accepting "waiting"
 	// This ensures we don't send the message during initial startup (false "waiting")
 	sawActive := false
-	waitingCount := 0 // Track consecutive "waiting" states to detect already-ready sessions
+	waitingCount := 0  // Track consecutive "waiting" states to detect already-ready sessions
 	maxAttempts := 300 // 60 seconds max (300 * 200ms) - Claude with MCPs can take 40-60s
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -1291,119 +1291,122 @@ func (i *Instance) SetGeminiModel(model string) error {
 // Primary source: tmux environment (set by capture-resume pattern)
 // Fallback: filesystem scan for most recent session (handles agent-deck restarts)
 // Cross-project search: handles path hash mismatches
-func (i *Instance) UpdateGeminiSession(excludeIDs map[string]bool) {
+func (i *Instance) UpdateGeminiSession(_ map[string]bool) {
 	if i.Tool != "gemini" {
 		return
 	}
 
 	// 1. Try to read from tmux environment first (authoritative if set)
-	if i.tmuxSession != nil {
-		if sessionID, err := i.tmuxSession.GetEnvironment("GEMINI_SESSION_ID"); err == nil && sessionID != "" {
-			if i.GeminiSessionID != sessionID {
-				i.GeminiSessionID = sessionID
-			}
-			i.GeminiDetectedAt = time.Now()
-		}
-
-		// Detect YOLO Mode from environment (authoritative sync)
-		if yoloEnv, err := i.tmuxSession.GetEnvironment("GEMINI_YOLO_MODE"); err == nil && yoloEnv != "" {
-			enabled := yoloEnv == "true"
-			i.GeminiYoloMode = &enabled
-		}
-	}
+	syncGeminiSessionFromTmux(i)
 
 	// 2. Fallback: scan filesystem if no session ID from tmux env
 	// This handles cases where agent-deck restarted and tmux env was lost
-	if i.GeminiSessionID == "" {
-		sessions, err := ListGeminiSessions(i.ProjectPath)
-		if err == nil && len(sessions) > 0 {
-			// Pick the most recent session (list is sorted by LastUpdated desc)
-			mostRecent := sessions[0]
-			i.GeminiSessionID = mostRecent.SessionID
-			i.GeminiDetectedAt = time.Now()
+	syncGeminiSessionFromFile(i)
 
-			// Sync back to tmux environment for future restarts
-			if i.tmuxSession != nil && i.tmuxSession.Exists() {
-				_ = i.tmuxSession.SetEnvironment("GEMINI_SESSION_ID", i.GeminiSessionID)
-			}
-
-			log.Printf("[GEMINI] Detected session ID from filesystem: %s", i.GeminiSessionID)
-		}
-	}
+	// Real-time model detection from output stream (run before analytics to pick up changes)
+	detectGeminiModelRealTime(i)
 
 	// Update analytics if we have a session ID
-	if i.GeminiSessionID != "" {
-		if i.GeminiAnalytics == nil {
-			i.GeminiAnalytics = &GeminiSessionAnalytics{}
-		}
-		// Non-blocking update (ignore errors, best effort)
-		// Note: UpdateGeminiAnalyticsFromDisk already has cross-project fallback
-		_ = UpdateGeminiAnalyticsFromDisk(i.ProjectPath, i.GeminiSessionID, i.GeminiAnalytics)
-
-		// Sync model from analytics if not explicitly set on instance
-		// Note: We keep GeminiModel empty/auto if user hasn't locked it to a specific model
-		// This enables the auto(detected) label in the UI.
-		if i.GeminiModel != "" && i.GeminiModel != "auto" && i.GeminiAnalytics.Model != "" {
-			i.GeminiModel = i.GeminiAnalytics.Model
-		}
-	}
-
-	// Real-time model detection from output stream
-	if i.tmuxSession != nil && i.tmuxSession.Exists() {
-		content, err := i.tmuxSession.CapturePane()
-		if err == nil {
-			// Strip ANSI codes before matching (fixes #E2E failure)
-			cleanContent := tmux.StripANSI(content)
-
-			// Pattern: "Now using gemini-X.Y-..."
-			re := regexp.MustCompile(`Now using (gemini-[\w.-]+)`)
-			matches := re.FindAllStringSubmatch(cleanContent, -1)
-			if len(matches) > 0 {
-				// Use the LAST match (most recent output)
-				// tmux capture-pane returns content from top to bottom
-				lastMatch := matches[len(matches)-1]
-				if len(lastMatch) > 1 {
-					detected := lastMatch[1]
-					if i.GeminiAnalytics == nil {
-						i.GeminiAnalytics = &GeminiSessionAnalytics{}
-					}
-					// Update analytics model (real-time source)
-					i.GeminiAnalytics.Model = detected
-
-					// ONLY update instance model if user has locked a specific model
-					// If it's empty or "auto", we keep it that way to show the auto label in UI
-					if i.GeminiModel != "" && i.GeminiModel != "auto" {
-						i.GeminiModel = detected
-					}
-				}
-			}
-		}
-	}
+	updateGeminiAnalytics(i)
 
 	// Update latest prompt from session file
-	if i.GeminiSessionID != "" && len(i.GeminiSessionID) >= 8 {
-		sessionsDir := GetGeminiSessionsDir(i.ProjectPath)
-		pattern := filepath.Join(sessionsDir, "session-*-"+i.GeminiSessionID[:8]+".json")
-		latestFile := findNewestFile(pattern)
+	updateGeminiLatestPrompt(i)
+}
 
-		// Fallback: cross-project search
-		if latestFile == "" {
-			latestFile = findGeminiSessionInAllProjects(i.GeminiSessionID)
+// syncGeminiSessionFromTmux handles ID and YOLO mode discovery from environment
+func syncGeminiSessionFromTmux(i *Instance) {
+	if i.tmuxSession == nil {
+		return
+	}
+
+	if sessionID, err := i.tmuxSession.GetEnvironment("GEMINI_SESSION_ID"); err == nil && sessionID != "" {
+		if i.GeminiSessionID != sessionID {
+			i.GeminiSessionID = sessionID
+		}
+		i.GeminiDetectedAt = time.Now()
+	}
+
+	// Detect YOLO Mode from environment (authoritative sync)
+	if yoloEnv, err := i.tmuxSession.GetEnvironment("GEMINI_YOLO_MODE"); err == nil && yoloEnv != "" {
+		enabled := yoloEnv == "true"
+		i.GeminiYoloMode = &enabled
+	}
+}
+
+// syncGeminiSessionFromFile handles fallback file scanning if no ID from tmux
+func syncGeminiSessionFromFile(i *Instance) {
+	if i.GeminiSessionID != "" {
+		return
+	}
+
+	sessions, err := ListGeminiSessions(i.ProjectPath)
+	if err == nil && len(sessions) > 0 {
+		// Pick the most recent session (list is sorted by LastUpdated desc)
+		mostRecent := sessions[0]
+		i.GeminiSessionID = mostRecent.SessionID
+		i.GeminiDetectedAt = time.Now()
+
+		// Sync back to tmux environment for future restarts
+		if i.tmuxSession != nil && i.tmuxSession.Exists() {
+			_ = i.tmuxSession.SetEnvironment("GEMINI_SESSION_ID", i.GeminiSessionID)
 		}
 
-		if latestFile != "" {
-			// PERFORMANCE OPTIMIZATION: Check modification time before parsing
-			info, err := os.Stat(latestFile)
-			if err == nil && !i.LastPromptModTime.IsZero() && info.ModTime().Equal(i.LastPromptModTime) {
-				// File hasn't changed, skip parse but CONTINUE with other detection logic
-			} else {
-				if data, err := os.ReadFile(latestFile); err == nil {
-					if prompt, err := parseGeminiLatestUserPrompt(data); err == nil && prompt != "" {
-						i.LatestPrompt = prompt
-						if info != nil {
-							i.LastPromptModTime = info.ModTime()
-						}
-					}
+		log.Printf("[GEMINI] Detected session ID from filesystem: %s", i.GeminiSessionID)
+	}
+}
+
+// updateGeminiAnalytics manages token usage and cost updates
+func updateGeminiAnalytics(i *Instance) {
+	if i.GeminiSessionID == "" {
+		return
+	}
+
+	if i.GeminiAnalytics == nil {
+		i.GeminiAnalytics = &GeminiSessionAnalytics{}
+	}
+	// Non-blocking update (ignore errors, best effort)
+	// Note: UpdateGeminiAnalyticsFromDisk already has cross-project fallback
+	_ = UpdateGeminiAnalyticsFromDisk(i.ProjectPath, i.GeminiSessionID, i.GeminiAnalytics)
+
+	// Sync model from analytics if available
+	// The detected model from session history/analytics overwrites the selection
+	// UNLESS selection is 'auto', which we preserve for the dynamic UI label
+	if i.GeminiAnalytics.Model != "" && i.GeminiModel != "auto" {
+		i.GeminiModel = i.GeminiAnalytics.Model
+	}
+}
+
+// detectGeminiModelRealTime handles regex-based detection from tmux output
+func detectGeminiModelRealTime(i *Instance) {
+	if i.tmuxSession == nil || !i.tmuxSession.Exists() {
+		return
+	}
+
+	content, err := i.tmuxSession.CapturePane()
+	if err == nil {
+		// Strip ANSI codes before matching (fixes #E2E failure)
+		cleanContent := tmux.StripANSI(content)
+
+		// Pattern 1: "Now using (gemini-[\w.-]+)" - output when model is changed
+		// Pattern 2: "(gemini-[\w.-]+) /model" - status line indicator
+		re := regexp.MustCompile(`(?:Now using |^|\s)(gemini-[\w.-]+)(?:\s/model|$)`)
+		matches := re.FindAllStringSubmatch(cleanContent, -1)
+		if len(matches) > 0 {
+			// Use the LAST match (most recent output)
+			// tmux capture-pane returns content from top to bottom
+			lastMatch := matches[len(matches)-1]
+			if len(lastMatch) > 1 {
+				detected := lastMatch[1]
+				if i.GeminiAnalytics == nil {
+					i.GeminiAnalytics = &GeminiSessionAnalytics{}
+				}
+				// Update analytics model (real-time source)
+				i.GeminiAnalytics.Model = detected
+
+				// Authority: Detected model overwrites selection UNLESS selection is 'auto'
+				// This preserves the 'auto' state for the UI's dynamic label
+				if i.GeminiModel != "auto" {
+					i.GeminiModel = detected
 				}
 			}
 		}
@@ -1821,14 +1824,14 @@ func parseGeminiLastAssistantMessage(data []byte) (*ResponseOutput, error) {
 	var session struct {
 		SessionID string `json:"sessionId"` // VERIFIED: camelCase
 		Messages  []struct {
-			ID        string          `json:"id"`
-			Timestamp string          `json:"timestamp"`
-			Type      string          `json:"type"` // VERIFIED: "user" or "gemini"
-			Content   string          `json:"content"`
+			ID        string            `json:"id"`
+			Timestamp string            `json:"timestamp"`
+			Type      string            `json:"type"` // VERIFIED: "user" or "gemini"
+			Content   string            `json:"content"`
 			ToolCalls []json.RawMessage `json:"toolCalls,omitempty"`
 			Thoughts  []json.RawMessage `json:"thoughts,omitempty"`
-			Model     string          `json:"model,omitempty"`
-			Tokens    json.RawMessage `json:"tokens,omitempty"`
+			Model     string            `json:"model,omitempty"`
+			Tokens    json.RawMessage   `json:"tokens,omitempty"`
 		} `json:"messages"`
 	}
 
@@ -2759,4 +2762,38 @@ func UpdateClaudeSessionsWithDedup(instances []*Instance) {
 	}
 	// No re-detection step - tmux env is the authoritative source
 	// Sessions will get their IDs from UpdateClaudeSession() during normal status updates
+}
+
+// updateGeminiLatestPrompt manages the cached user prompt from session files
+func updateGeminiLatestPrompt(i *Instance) {
+	if i.GeminiSessionID == "" || len(i.GeminiSessionID) < 8 {
+		return
+	}
+
+	sessionsDir := GetGeminiSessionsDir(i.ProjectPath)
+	pattern := filepath.Join(sessionsDir, "session-*-"+i.GeminiSessionID[:8]+".json")
+	latestFile := findNewestFile(pattern)
+
+	// Fallback: cross-project search
+	if latestFile == "" {
+		latestFile = findGeminiSessionInAllProjects(i.GeminiSessionID)
+	}
+
+	if latestFile != "" {
+		// PERFORMANCE OPTIMIZATION: Check modification time before parsing
+		info, err := os.Stat(latestFile)
+		if err == nil && !i.LastPromptModTime.IsZero() && info.ModTime().Equal(i.LastPromptModTime) {
+			// File hasn't changed, skip parse
+			return
+		}
+
+		if data, err := os.ReadFile(latestFile); err == nil {
+			if prompt, err := parseGeminiLatestUserPrompt(data); err == nil && prompt != "" {
+				i.LatestPrompt = prompt
+				if info != nil {
+					i.LastPromptModTime = info.ModTime()
+				}
+			}
+		}
+	}
 }

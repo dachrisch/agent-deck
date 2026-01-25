@@ -1560,7 +1560,7 @@ func (s *Session) hasBusyIndicator(content string) bool {
 	recent10 := strings.ToLower(strings.Join(last10, "\n"))
 
 	// Check for standard status keywords
-	statusKeywords := []string{"thinking...", "analyzing...", "researching...", "esc to cancel", "esc to interrupt"}
+	statusKeywords := []string{"esc to cancel", "esc to interrupt"}
 	for _, kw := range statusKeywords {
 		if strings.Contains(recent10, kw) {
 			debugLog("%s: BUSY_REASON=%s", shortName, kw)
@@ -1668,8 +1668,9 @@ var (
 	dynamicStatusPattern = regexp.MustCompile(`\([^)]*\d+s\s*·[^)]*tokens[^)]*\)`)
 
 	// Matches whimsical thinking words with timing info (e.g., "Flibbertigibbeting... (25s · 340 tokens)")
-	// Updated to include all 90 Claude Code whimsical words
-	thinkingPattern = regexp.MustCompile(`(?i)(` + whimsicalWordsPattern + `)[^(]*\([^)]*\)`)
+	// Updated to include all 90 Claude Code whimsical words.
+	// Requires a braille spinner prefix to ensure it's an active status line.
+	thinkingPattern = regexp.MustCompile(`(?i)[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏][[:space:]]*(` + whimsicalWordsPattern + `)[[:space:]]+\([^)]*\)`)
 
 	// Progress bar patterns for normalization (Fix 2.1)
 	// These cause hash changes when progress updates

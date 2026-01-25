@@ -1,117 +1,115 @@
 package session
 
 import (
-        "crypto/sha256"
-        "encoding/hex"
-        "encoding/json"
-        "fmt"
-        "io"
-        "net/http"
-        "os"
-        "path/filepath"
-        "sort"
-        "strings"
-        "sync"
-        "time"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
 )
 
 var (
-        geminiModelsCache   []string
-        geminiModelsCacheMu sync.Mutex
-        geminiModelsLast    time.Time
+	geminiModelsCache   []string
+	geminiModelsCacheMu sync.Mutex
+	geminiModelsLast    time.Time
 )
 
 // GetAvailableGeminiModels returns a list of available Gemini models.
 // It uses the Gemini API to fetch models if GOOGLE_API_KEY is present.
 // Results are cached for 1 hour.
 func GetAvailableGeminiModels() ([]string, error) {
-        // Support environment variable override for testing (priority 1)
-        if override := os.Getenv("GEMINI_MODELS_OVERRIDE"); override != "" {
-                models := strings.Split(override, ",")
-                for i := range models {
-                        models[i] = strings.TrimSpace(models[i])
-                }
-                sort.Strings(models)
-                return models, nil
-        }
+	// Support environment variable override for testing (priority 1)
+	if override := os.Getenv("GEMINI_MODELS_OVERRIDE"); override != "" {
+		models := strings.Split(override, ",")
+		for i := range models {
+			models[i] = strings.TrimSpace(models[i])
+		}
+		sort.Strings(models)
+		return models, nil
+	}
 
-        geminiModelsCacheMu.Lock()
-        defer geminiModelsCacheMu.Unlock()
+	geminiModelsCacheMu.Lock()
+	defer geminiModelsCacheMu.Unlock()
 
-        // Return cached results if fresh (1 hour)
-        if len(geminiModelsCache) > 0 && time.Since(geminiModelsLast) < time.Hour {
-                return geminiModelsCache, nil
-        }
+	// Return cached results if fresh (1 hour)
+	if len(geminiModelsCache) > 0 && time.Since(geminiModelsLast) < time.Hour {
+		return geminiModelsCache, nil
+	}
 
-        apiKey := os.Getenv("GOOGLE_API_KEY")
-        if apiKey == "" {
-                // Return common defaults if no API key
-                return []string{
-					"gemini-3-pro-preview",
-					"gemini-3-flash-preview",
-					"gemini-2.5-pro",
-					"gemini-2.5-flash",
-					"gemini-2.5-flash-lite",
-					"gemini-2.0-flash", 
-					"gemini-1.5-flash", 
-					"gemini-1.5-pro",
-				}, nil
-        }
+	apiKey := os.Getenv("GOOGLE_API_KEY")
+	if apiKey == "" {
+		// Return common defaults if no API key
+		return []string{
+			"gemini-3-pro-preview",
+			"gemini-3-flash-preview",
+			"gemini-2.5-pro",
+			"gemini-2.5-flash",
+			"gemini-2.5-flash-lite",
+			"gemini-2.0-flash",
+			"gemini-1.5-flash",
+			"gemini-1.5-pro",
+		}, nil
+	}
 
-        url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models?key=%s", apiKey)
-        resp, err := http.Get(url)
-        if err != nil {
-                return nil, fmt.Errorf("failed to fetch models: %w", err)
-        }
-        defer resp.Body.Close()
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models?key=%s", apiKey)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch models: %w", err)
+	}
+	defer resp.Body.Close()
 
-        if resp.StatusCode != http.StatusOK {
-                return nil, fmt.Errorf("api returned status: %s", resp.Status)
-        }
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("api returned status: %s", resp.Status)
+	}
 
-        body, err := io.ReadAll(resp.Body)
-        if err != nil {
-                return nil, fmt.Errorf("failed to read response: %w", err)
-        }
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
 
-        var result struct {
-                Models []struct {
-                        Name             string   `json:"name"`
-                        SupportedMethods []string `json:"supportedGenerationMethods"`
-                } `json:"models"`
-        }
+	var result struct {
+		Models []struct {
+			Name             string   `json:"name"`
+			SupportedMethods []string `json:"supportedGenerationMethods"`
+		} `json:"models"`
+	}
 
-        if err := json.Unmarshal(body, &result); err != nil {
-                return nil, fmt.Errorf("failed to parse models: %w", err)
-        }
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse models: %w", err)
+	}
 
-        var models []string
-        for _, m := range result.Models {
-                // Filter for models that support content generation
-                canGenerate := false
-                for _, method := range m.SupportedMethods {
-                        if method == "generateContent" {
-                                canGenerate = true
-                                break
-                        }
-                }
+	var models []string
+	for _, m := range result.Models {
+		// Filter for models that support content generation
+		canGenerate := false
+		for _, method := range m.SupportedMethods {
+			if method == "generateContent" {
+				canGenerate = true
+				break
+			}
+		}
 
-                if canGenerate {
-                        // Extract short name: models/gemini-pro -> gemini-pro
-                        name := m.Name
-                        if strings.HasPrefix(name, "models/") {
-                                name = name[7:]
-                        }
-                        models = append(models, name)
-                }
-        }
+		if canGenerate {
+			// Extract short name: models/gemini-pro -> gemini-pro
+			name := strings.TrimPrefix(m.Name, "models/")
+			models = append(models, name)
+		}
+	}
 
-        sort.Strings(models)
-        geminiModelsCache = models
-        geminiModelsLast = time.Now()
+	sort.Strings(models)
+	geminiModelsCache = models
+	geminiModelsLast = time.Now()
 
-        return models, nil
+	return models, nil
 }
+
 // geminiConfigDirOverride allows tests to override config directory
 var geminiConfigDirOverride string
 
@@ -158,8 +156,8 @@ func GetGeminiSessionsDir(projectPath string) string {
 
 // GeminiSessionInfo holds parsed session metadata
 type GeminiSessionInfo struct {
-	SessionID    string    // Full UUID
-	Filename     string    // session-2025-12-26T15-09-4d8fcb4d.json
+	SessionID    string // Full UUID
+	Filename     string // session-2025-12-26T15-09-4d8fcb4d.json
 	StartTime    time.Time
 	LastUpdated  time.Time
 	MessageCount int
@@ -234,31 +232,6 @@ func ListGeminiSessions(projectPath string) ([]GeminiSessionInfo, error) {
 }
 
 // findNewestFile returns the newest file matching the pattern by modification time
-func findNewestFile(pattern string) string {
-	files, _ := filepath.Glob(pattern)
-	if len(files) == 0 {
-		return ""
-	}
-	if len(files) == 1 {
-		return files[0]
-	}
-
-	var newestFile string
-	var newestTime time.Time
-
-	for _, file := range files {
-		info, err := os.Stat(file)
-		if err != nil {
-			continue
-		}
-		if info.ModTime().After(newestTime) {
-			newestTime = info.ModTime()
-			newestFile = file
-		}
-	}
-	return newestFile
-}
-
 // findGeminiSessionInAllProjects searches all Gemini project directories for a session file
 // This handles path hash mismatches when agent-deck runs from a different directory
 // than where the Gemini session was originally created.
@@ -401,4 +374,3 @@ func UpdateGeminiAnalyticsFromDisk(projectPath, sessionID string, analytics *Gem
 
 	return nil
 }
-
