@@ -114,6 +114,7 @@ func TestPromptDetector(t *testing.T) {
 		{"Action Required", true},
 		{"Waiting for user confirmation", true},
 		{"Allow execution of: 'npm'?", true},
+		{"⠏ Waiting for user confirmation...", true},
 		// Input prompt (--dangerously-skip-permissions mode)
 		{">", true},
 		{"> ", true},
@@ -219,6 +220,11 @@ func TestBusyIndicatorDetection(t *testing.T) {
 		{
 			name:     "prompt waiting",
 			content:  "Done!\n>\n",
+			expected: false,
+		},
+		{
+			name:     "waiting for confirmation with spinner (Action Required)",
+			content:  "Allow execution of: 'npm'?\n⠏ Waiting for user confirmation...",
 			expected: false,
 		},
 	}

@@ -1243,6 +1243,13 @@ func (s *Session) GetStatus() (string, error) {
 
 			// Check for explicit busy indicator (spinner, "ctrl+c to interrupt")
 			isExplicitlyBusy := s.hasBusyIndicator(content)
+
+			// Check for prompt - prompts ALWAYS override busy indicators
+			// (e.g. "Action Required" dialog has a spinner but is a prompt)
+			if NewPromptDetector(s.detectedTool).HasPrompt(content) {
+				isExplicitlyBusy = false
+			}
+
 			// Debug: show last line of content for this session
 			lines := strings.Split(content, "\n")
 			lastLine := ""
@@ -1442,7 +1449,12 @@ func (s *Session) getStatusFallback() (string, error) {
 		return "inactive", nil
 	}
 
-	if s.hasBusyIndicator(content) {
+	isBusy := s.hasBusyIndicator(content)
+	if isBusy && NewPromptDetector(s.detectedTool).HasPrompt(content) {
+		isBusy = false
+	}
+
+	if isBusy {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.ensureStateTrackerLocked()
@@ -1670,12 +1682,22 @@ func (s *Session) hasBusyIndicator(content string) bool {
 		// Skip lines starting with box-drawing characters (e.g., │├└─┌┐┘┤┬┴┼)
 		// These are UI borders that can contain braille-like chars as rendering artifacts
 		trimmedLine := strings.TrimSpace(line)
+		lineLower := strings.ToLower(line)
 		if len(trimmedLine) > 0 {
 			r := []rune(trimmedLine)[0]
 			if r == '│' || r == '├' || r == '└' || r == '─' || r == '┌' || r == '┐' || r == '┘' || r == '┤' || r == '┬' || r == '┴' || r == '┼' || r == '╭' || r == '╰' || r == '╮' || r == '╯' {
 				continue
 			}
 		}
+
+		// Check for "waiting" patterns that should override spinner detection
+		// These are patterns where a spinner might be present but the tool is actually waiting
+		if strings.Contains(lineLower, "waiting for user confirmation") ||
+			strings.Contains(lineLower, "action required") ||
+			strings.Contains(lineLower, "allow execution of") {
+			continue
+		}
+
 		for _, spinner := range spinnerChars {
 			if strings.Contains(line, spinner) {
 				debugLog("%s: BUSY_REASON=spinner char=%q", shortName, spinner)

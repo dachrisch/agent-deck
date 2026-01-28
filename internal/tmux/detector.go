@@ -89,8 +89,45 @@ func (d *PromptDetector) hasClaudePrompt(content string) bool {
 	recentLower := strings.ToLower(recentContent)
 
 	// ═══════════════════════════════════════════════════════════════════════
+	// WAITING indicators - Permission prompts (normal mode)
+	// Prompts take priority over busy indicators (some prompts have spinners)
+	// ═══════════════════════════════════════════════════════════════════════
+	permissionPrompts := []string{
+		// From Claude Squad (most reliable indicator)
+		"No, and tell Claude what to do differently",
+		// Permission dialog options
+		"Yes, allow once",
+		"Yes, allow always",
+		"Allow once",
+		"Allow always",
+		// Box-drawing permission dialogs
+		"│ Do you want",
+		"│ Would you like",
+		"│ Allow",
+		// Selection indicators
+		"❯ Yes",
+		"❯ No",
+		"❯ Allow",
+		// Trust prompt on startup
+		"Do you trust the files in this folder?",
+		// MCP permission prompts
+		"Allow this MCP server",
+		// Tool permission prompts
+		"Run this command?",
+		"Execute this?",
+		"Action Required",
+		"Waiting for user confirmation",
+		"Allow execution of",
+	}
+	for _, prompt := range permissionPrompts {
+		if strings.Contains(content, prompt) {
+			return true
+		}
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
 	// BUSY indicators (if these are present, Claude is NOT waiting)
-	// Priority: Check busy state FIRST - if busy, definitely not waiting
+	// Priority: Check busy state AFTER permission prompts
 	// ═══════════════════════════════════════════════════════════════════════
 	busyIndicators := []string{
 		"ctrl+c to interrupt", // PRIMARY - current Claude Code (2024+)
@@ -134,42 +171,6 @@ func (d *PromptDetector) hasClaudePrompt(content string) bool {
 	}
 	if strings.Contains(recentLower, "connecting") && strings.Contains(recentLower, "tokens") {
 		return false // Connecting state
-	}
-
-	// ═══════════════════════════════════════════════════════════════════════
-	// WAITING indicators - Permission prompts (normal mode)
-	// ═══════════════════════════════════════════════════════════════════════
-	permissionPrompts := []string{
-		// From Claude Squad (most reliable indicator)
-		"No, and tell Claude what to do differently",
-		// Permission dialog options
-		"Yes, allow once",
-		"Yes, allow always",
-		"Allow once",
-		"Allow always",
-		// Box-drawing permission dialogs
-		"│ Do you want",
-		"│ Would you like",
-		"│ Allow",
-		// Selection indicators
-		"❯ Yes",
-		"❯ No",
-		"❯ Allow",
-		// Trust prompt on startup
-		"Do you trust the files in this folder?",
-		// MCP permission prompts
-		"Allow this MCP server",
-		// Tool permission prompts
-		"Run this command?",
-		"Execute this?",
-		"Action Required",
-		"Waiting for user confirmation",
-		"Allow execution of",
-	}
-	for _, prompt := range permissionPrompts {
-		if strings.Contains(content, prompt) {
-			return true
-		}
 	}
 
 	// ═══════════════════════════════════════════════════════════════════════
